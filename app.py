@@ -2,7 +2,7 @@ import os
 import secrets
 import datetime
 import requests
-from flask import Flask, request, jsonify, Response # Response যুক্ত করা হয়েছে
+from flask import Flask, request, jsonify, Response
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 
@@ -16,7 +16,19 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
-# ১. ফায়ারবেস ক্রেডেনশিয়াল জেসন
+# =========================================================================
+# ফায়ারবেস ক্লায়েন্ট কনফিগারেশন (এখানে আপনার ফায়ারবেস ওয়েব অ্যাপের মানগুলো বসিয়ে দিন)
+# =========================================================================
+FIREBASE_CLIENT_CONFIG = {
+    "apiKey": "এখানে_আপনার_Firebase_Web_API_Key_দিন",           # উদাহরণ: "AIzaSy..."
+    "authDomain": "all-panel-support.firebaseapp.com",
+    "projectId": "all-panel-support",
+    "storageBucket": "all-panel-support.appspot.com",
+    "messagingSenderId": "এখানে_আপনার_Messaging_Sender_ID_দিন", # উদাহরণ: "112981..."
+    "appId": "এখানে_আপনার_Firebase_App_ID_দিন"                 # উদাহরণ: "1:112981..."
+}
+
+# ১. সরাসরি আপনার ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
 firebase_creds = {
   "type": "service_account",
   "project_id": "all-panel-support",
@@ -220,7 +232,6 @@ def get_otp():
                     transaction = db.transaction()
                     update_balance_transaction(transaction, user_ref)
 
-                    # ওটিপি লগ স্টোর
                     db.collection('otp_logs').add({
                         'userId': user_id,
                         'number': number,
@@ -292,7 +303,7 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page - Pure Response to prevent Jinja Collision)
+# ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -482,7 +493,7 @@ def index():
                   <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                     <div class="bg-purple-50 h-12 w-12 rounded-full flex items-center justify-center text-purple-600"><i class="fa-solid fa-folder-closed text-lg"></i></div>
                     <div>
-                      <p class="text-xs text-slate-400 font-semibold">昨日 সফল নাম্বার</p>
+                      <p class="text-xs text-slate-400 font-semibold">গতকালকের সফল নাম্বার</p>
                       <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
                     </div>
                   </div>
@@ -784,9 +795,12 @@ def index():
             const liveLogs = ref([]);
             const successOtps = ref([]);
             const timeLeft = ref(1080);
+            const windowOrigin = ref(''); 
             let timer = null;
 
             onMounted(() => {
+              windowOrigin.value = window.location.origin; 
+
               auth.onAuthStateChanged(currentUser => {
                 if (currentUser) {
                   user.value = currentUser;
@@ -904,7 +918,7 @@ def index():
             return {
               user, profile, authEmail, authPassword, isRegistering, authLoading,
               currentTab, rid, activeNumber, otpResult, loadingNumber, liveLogs, successOtps, timeLeft,
-              handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, window
+              windowOrigin, handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, window
             };
           }
         }).mount('#app');
@@ -919,7 +933,6 @@ def index():
     html_content = html_content.replace("__MESSAGING_SENDER_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", ""))
     html_content = html_content.replace("__APP_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_APP_ID", ""))
 
-    # ৫. রেন্ডার_টেম্পলেট_স্ট্রিং এর বদলে রিউ রেসপন্স রিটার্ন করে ব্র্যাকেট সংঘর্ষ এড়ানো হলো
     return Response(html_content, mimetype='text/html')
 
 if __name__ == '__main__':
