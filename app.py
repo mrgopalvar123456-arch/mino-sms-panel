@@ -12,7 +12,7 @@ from firebase_admin import db as fb_db
 app = Flask(__name__)
 
 # =========================================================================
-# ফায়ারবেজ এডমিন কনফিগারেশন 
+# Firebase Admin Configuration
 # =========================================================================
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://mino-sms-2c740-default-rtdb.firebaseio.com/")
 
@@ -30,7 +30,7 @@ CRED_DICT = {
   "universe_domain": "googleapis.com"
 }
 
-# ফায়ারবেজ অ্যাপ ইনিশিয়েলাইজেশন
+# Firebase app initialization
 if not firebase_admin._apps and CRED_DICT.get("private_key"):
     CRED_DICT["private_key"] = CRED_DICT["private_key"].replace("\\n", "\n")
     cred = credentials.Certificate(CRED_DICT)
@@ -41,7 +41,7 @@ elif not firebase_admin._apps:
     print("Warning: Firebase Credentials could not be loaded because FIREBASE_PRIVATE_KEY is missing.")
 
 # =========================================================================
-# এডমিন ক্রেডেনশিয়াল এবং অথেনটিকেশন হেল্পার 
+# Admin Credentials and Authentication Helpers
 # =========================================================================
 ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -55,7 +55,7 @@ def verify_admin():
             return True
     return False
 
-# মেনটেইনেন্স মোড চেক করার ফাংশন
+# Maintenance mode checker function
 def is_maintenance():
     try:
         val = fb_db.reference('/settings/maintenance_mode').get()
@@ -64,7 +64,7 @@ def is_maintenance():
         return False
 
 # =========================================================================
-# বিফোর রিকোয়েস্ট (CORS এবং মেনটেইনেন্স মোড)
+# Before Request (CORS and Maintenance Mode)
 # =========================================================================
 @app.before_request
 def handle_pre_requests():
@@ -86,14 +86,14 @@ def handle_pre_requests():
             <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Under Maintenance</title>
+              <title>Under Scheduled Maintenance</title>
               <script src="https://cdn.tailwindcss.com"></script>
             </head>
             <body class="bg-slate-50 flex items-center justify-center h-screen font-sans">
               <div class="text-center p-8 bg-white rounded-3xl border border-slate-200 shadow-sm max-w-md mx-4 space-y-4">
                 <div class="h-16 w-16 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center text-3xl mx-auto shadow-sm">🛠️</div>
-                <h1 class="text-xl font-black text-slate-800">ওয়েবসাইট সাময়িকভাবে বন্ধ আছে</h1>
-                <p class="text-xs text-slate-500 leading-relaxed font-semibold">আমাদের সিস্টেম বর্তমানে আপগ্রেড বা উন্নয়নমূলক কাজের জন্য সাময়িকভাবে বন্ধ আছে। খুব শীঘ্রই আমরা পুনরায় ফিরে আসছি।</p>
+                <h1 class="text-xl font-black text-slate-800">System Under Maintenance</h1>
+                <p class="text-xs text-slate-500 leading-relaxed font-semibold">Our platform is currently down for scheduled upgrades or maintenance tasks. We will be back online shortly. Thank you for your patience.</p>
                 <div class="border-t border-slate-100 pt-4">
                   <p class="text-[10px] uppercase tracking-widest font-bold text-[#0088CC]">MINO SMS PANEL</p>
                 </div>
@@ -114,7 +114,7 @@ def after_request(response):
     return response
 
 # =========================================================================
-# ডেটাবেজ হ্যান্ডলারস 
+# Database Handlers
 # =========================================================================
 MEMORY_DB = None
 
@@ -209,7 +209,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# অথেনটিকেশন মিডলওয়্যার (অ্যাপ্রুভড ইউজার অনলি)
+# Authentication Middleware (Approved Users Only)
 def get_current_user(db):
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -226,7 +226,7 @@ def get_current_user(db):
     return None
 
 # =========================================================================
-# ইউজার এপিআই সমূহ 
+# User APIs
 # =========================================================================
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
@@ -283,13 +283,13 @@ def login():
             if u['email'] == email and u['password'] == password:
                 status = u.get('status', 'pending')
                 if status == 'pending':
-                    return jsonify({'status': 'error', 'message': 'আপনার অ্যাকাউন্টটি অনুমোদনের জন্য অপেক্ষমান। অনুগ্রহ করে অ্যাডমিনের সাথে যোগাযোগ করুন।'}), 403
+                    return jsonify({'status': 'error', 'message': 'Your account is pending administrator approval. Please contact support.'}), 403
                 if status == 'banned':
-                    return jsonify({'status': 'error', 'message': 'আপনার অ্যাকাউন্টটি ব্যান করা হয়েছে।'}), 403
+                    return jsonify({'status': 'error', 'message': 'Your account has been banned.'}), 403
                 
                 return jsonify({'status': 'success', 'token': uid, 'user': u})
 
-        return jsonify({'status': 'error', 'message': 'ইমেইল বা পাসওয়ার্ড ভুল।'}), 401
+        return jsonify({'status': 'error', 'message': 'Incorrect email or password.'}), 401
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -301,7 +301,7 @@ def get_me():
         if not u:
             return jsonify({'status': 'error', 'message': 'Unauthorized or Pending Approval'}), 401
         
-        # গ্লোবাল অ্যানাউন্সমেন্ট ব্যানার ফেচ
+        # Fetch global announcement banner
         announcement = fb_db.reference('/settings/announcement').get() or ''
         return jsonify({'status': 'success', 'user': u, 'announcement': announcement})
     except Exception as e:
@@ -344,7 +344,7 @@ def update_wallet():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# উইথড্রয়াল এপিআই (Withdrawal API for Users)
+# Withdrawal API for Users
 # =========================================================================
 @app.route('/api/v1/user/withdraw', methods=['POST'])
 def request_withdrawal():
@@ -360,19 +360,19 @@ def request_withdrawal():
         address = data.get('address', '').strip()
         
         if amount <= 0:
-            return jsonify({'status': 'error', 'message': 'সঠিক পরিমাণ এমাউন্ট লিখুন।'}), 400
+            return jsonify({'status': 'error', 'message': 'Please enter a valid withdrawal amount.'}), 400
         if amount > float(user.get('balance', 0)):
-            return jsonify({'status': 'error', 'message': 'আপনার পর্যাপ্ত ব্যালেন্স নেই।'}), 400
+            return jsonify({'status': 'error', 'message': 'Insufficient wallet balance.'}), 400
         if not address:
-            return jsonify({'status': 'error', 'message': 'উইথড্র গন্তব্য এড্রেস প্রয়োজন।'}), 400
+            return jsonify({'status': 'error', 'message': 'A withdrawal destination address is required.'}), 400
         
         user_id = user['uid']
         new_balance = float(user.get('balance', 0)) - amount
         
-        # ইউজার ব্যালেন্স সাবট্র্যাক্ট করা
+        # Deduct from user balance
         fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
         
-        # উইথড্র লগ তৈরি
+        # Store withdrawal request log
         with_id = "wd_" + secrets.token_hex(8)
         withdrawal_data = {
             'id': with_id,
@@ -387,12 +387,12 @@ def request_withdrawal():
         }
         fb_db.reference(f'/withdrawals/{with_id}').set(withdrawal_data)
         
-        return jsonify({'status': 'success', 'message': 'উইথড্রয়াল রিকোয়েস্ট সফলভাবে জমা হয়েছে।', 'new_balance': new_balance})
+        return jsonify({'status': 'success', 'message': 'Withdrawal request submitted successfully.', 'new_balance': new_balance})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# নম্বর ও ওটিপি রিসিভ এপিআই 
+# Number Allocation & OTP APIs
 # =========================================================================
 @app.route('/api/v1/getnum', methods=['GET', 'POST'])
 def getnum():
@@ -574,7 +574,7 @@ def get_user_allocations():
         except Exception as e:
             print("Background OTP sync error:", e)
 
-        # এক্সপায়ারড টাইমার চেক
+        # Elapsed timeout check (18-minute expiration timer)
         now = datetime.datetime.now(datetime.timezone.utc)
         user_allocs = [alloc for alloc in db["allocated_numbers"] if alloc['userId'] == user_id]
         
@@ -651,7 +651,7 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# গ্লোবাল এডমিন কন্ট্রোল এপিআই সমূহ (API Routes for Admin)
+# API Routes for Admin
 # =========================================================================
 @app.route('/api/v1/admin/login', methods=['POST'])
 def admin_api_login():
@@ -864,7 +864,7 @@ def admin_api_otp_logs():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# ফ্রন্টএন্ড UI পরিবেশন 
+# Client-side UI Rendering (Localized to English)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -887,7 +887,7 @@ def index():
       
       <div id="app">
 
-        <!-- লোডিং স্ক্রিন -->
+        <!-- Loading Screen Overlay -->
         <div v-if="!userLoaded" class="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center space-y-4 z-[99999]">
           <div class="h-12 w-12 border-4 border-[#0088CC] border-t-transparent rounded-full animate-spin"></div>
           <p class="text-xs font-black text-[#0088CC] uppercase tracking-widest animate-pulse">MINO PANEL LOADING...</p>
@@ -895,18 +895,18 @@ def index():
 
         <div v-cloak v-if="userLoaded">
 
-          <!-- কপি টোস্ট নোটিফিকেশন -->
+          <!-- Copy Toast Notification -->
           <div v-if="showToast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-[#0088CC] text-white font-black text-xs px-5 py-3.5 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
             {{ toastMessage }}
           </div>
 
-          <!-- লগইন / সাইনআপ উইন্ডো -->
+          <!-- Auth screen (Login / Register) -->
           <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
             <div class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
               <div class="text-center space-y-2">
                 <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md w-max">MINO</span>
                 <h1 class="text-xl font-black text-slate-900">MINO SMS PANEL</h1>
-                <p class="text-[10px] font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register account' : 'Sign in to network' }}</p>
+                <p class="text-[10px] font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register Account' : 'Sign in to network' }}</p>
               </div>
 
               <form @submit.prevent="handleAuth" class="space-y-4">
@@ -915,7 +915,7 @@ def index():
                   <input type="text" required v-model="authName" placeholder="Gopal Var" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
                 </div>
                 <div>
-                  <label class="text-xs font-bold text-slate-500">Email</label>
+                  <label class="text-xs font-bold text-slate-500">Email Address</label>
                   <input type="email" required v-model="authEmail" placeholder="gopal@network.com" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
                 </div>
                 <div>
@@ -936,10 +936,10 @@ def index():
             </div>
           </div>
 
-          <!-- মেইন প্যানেল ড্যাশবোর্ড -->
+          <!-- Main Panel Dashboard Interface -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- ডেস্কটপ সাইডবার -->
+            <!-- Desktop Sidebar Navigation -->
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -948,19 +948,19 @@ def index():
 
               <nav class="flex-1 p-4 space-y-1">
                 <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                  <i class="fa-solid fa-house"></i> ড্যাশবোর্ড
+                  <i class="fa-solid fa-house"></i> Dashboard
                 </button>
                 <button @click="currentTab = 'get-number'" :class="currentTab === 'get-number' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                  <i class="fa-solid fa-mobile-screen"></i> নাম্বার নিন
+                  <i class="fa-solid fa-mobile-screen"></i> Get Number
                 </button>
                 <button @click="currentTab = 'console'" :class="currentTab === 'console' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                  <i class="fa-solid fa-terminal"></i> কনসোল
+                  <i class="fa-solid fa-terminal"></i> Radar Console
                 </button>
                 <button @click="currentTab = 'payment'" :class="currentTab === 'payment' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                  <i class="fa-solid fa-wallet"></i> পেমেন্ট
+                  <i class="fa-solid fa-wallet"></i> Payment & Withdraw
                 </button>
                 <button @click="currentTab = 'profile'" :class="currentTab === 'profile' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                  <i class="fa-solid fa-user"></i> প্রোফাইল
+                  <i class="fa-solid fa-user"></i> Profile Details
                 </button>
               </nav>
 
@@ -976,31 +976,31 @@ def index():
               </div>
             </aside>
 
-            <!-- মোবাইল বটম নেভিগেশন -->
+            <!-- Mobile Bottom Navigation -->
             <div class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around py-2 z-50 shadow-lg px-2">
               <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
                 <i class="fa-solid fa-house text-lg"></i>
-                <span>হোম</span>
+                <span>Home</span>
               </button>
               <button @click="currentTab = 'get-number'" :class="currentTab === 'get-number' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
                 <i class="fa-solid fa-mobile-screen text-lg"></i>
-                <span>নাম্বার নিন</span>
+                <span>Get Number</span>
               </button>
               <button @click="currentTab = 'console'" :class="currentTab === 'console' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
                 <i class="fa-solid fa-terminal text-lg"></i>
-                <span>কনসোল</span>
+                <span>Console</span>
               </button>
               <button @click="currentTab = 'payment'" :class="currentTab === 'payment' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
                 <i class="fa-solid fa-wallet text-lg"></i>
-                <span>পেমেন্ট</span>
+                <span>Payment</span>
               </button>
               <button @click="currentTab = 'profile'" :class="currentTab === 'profile' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
                 <i class="fa-solid fa-user text-lg"></i>
-                <span>প্রোফাইল</span>
+                <span>Profile</span>
               </button>
             </div>
 
-            <!-- মেইন কন্টেন্ট এরিয়া -->
+            <!-- Main Content Area -->
             <main class="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto pb-24 md:pb-8">
               
               <header class="flex justify-between items-center border-b border-slate-200 pb-4">
@@ -1014,13 +1014,13 @@ def index():
                 </div>
               </header>
 
-              <!-- গ্লোবাল অ্যানাউন্সমেন্ট ব্যানার -->
+              <!-- Global Announcement Banner -->
               <div v-if="announcement" class="bg-indigo-50 border border-indigo-200 text-indigo-800 px-5 py-3 rounded-2xl text-xs font-bold flex items-center gap-2 animate-pulse">
                 <i class="fa-solid fa-bullhorn text-[#0088CC]"></i>
                 <span>{{ announcement }}</span>
               </div>
 
-              <!-- ==================== সেকশন ১: ড্যাশবোর্ড ==================== -->
+              <!-- ==================== SECTION 1: Dashboard ==================== -->
               <div v-if="currentTab === 'dashboard'" class="space-y-6">
                 <div>
                   <h3 class="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">WALLET & REPORT</h3>
@@ -1029,7 +1029,7 @@ def index():
                     <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3">
                       <div class="bg-emerald-50 h-10 w-10 rounded-xl flex items-center justify-center text-emerald-600 shrink-0"><i class="fa-solid fa-wallet text-md"></i></div>
                       <div>
-                        <p class="text-[10px] text-slate-400 font-bold">ব্যালেন্স</p>
+                        <p class="text-[10px] text-slate-400 font-bold">Balance</p>
                         <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h4>
                       </div>
                     </div>
@@ -1037,7 +1037,7 @@ def index():
                     <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3">
                       <div class="bg-amber-50 h-10 w-10 rounded-xl flex items-center justify-center text-amber-600 shrink-0"><i class="fa-solid fa-tag text-md"></i></div>
                       <div>
-                        <p class="text-[10px] text-slate-400 font-bold">ওটিপি রেট</p>
+                        <p class="text-[10px] text-slate-400 font-bold">OTP Rate</p>
                         <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.otp_rate : 0.40).toFixed(2) }}</h4>
                       </div>
                     </div>
@@ -1045,8 +1045,8 @@ def index():
                     <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3 col-span-2 md:col-span-1">
                       <div class="bg-blue-50 h-10 w-10 rounded-xl flex items-center justify-center text-blue-600 shrink-0"><i class="fa-solid fa-box text-md"></i></div>
                       <div>
-                        <p class="text-[10px] text-slate-400 font-bold">আজকের মোট ওটিপি</p>
-                        <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">{{ successOtps.length }} টি</h4>
+                        <p class="text-[10px] text-slate-400 font-bold">Today's OTPs</p>
+                        <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">{{ successOtps.length }} unit(s)</h4>
                       </div>
                     </div>
 
@@ -1055,12 +1055,12 @@ def index():
 
                 <div class="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
                   <div class="p-4 border-b border-slate-100 bg-slate-50/50">
-                    <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">সর্বশেষ ওটিপি রিপোর্ট</h4>
+                    <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">Latest OTP Reports</h4>
                   </div>
 
                   <div class="block divide-y divide-slate-100">
                     <div v-if="successOtps.length === 0" class="p-8 text-center text-slate-400 font-semibold text-xs">
-                      কোনো ওটিপি ডাটা পাওয়া যায়নি।
+                      No OTP data currently available.
                     </div>
                     <div v-else v-for="log in successOtps" :key="log.created_at" class="p-4 space-y-2 text-xs">
                       <div class="flex justify-between items-center">
@@ -1068,10 +1068,10 @@ def index():
                         <span class="px-2 py-0.5 bg-[#0088CC]/10 text-[#0088CC] rounded text-[9px] font-bold uppercase">{{ log.service }}</span>
                       </div>
                       <div class="flex justify-between items-center bg-slate-50 p-2 rounded-xl">
-                        <span class="text-slate-400 font-bold">ওটিপি কোড:</span>
+                        <span class="text-slate-400 font-bold">OTP Code:</span>
                         <span class="font-bold text-emerald-600 text-sm">{{ log.otp_code }}</span>
                       </div>
-                      <p class="text-[11px] text-slate-500 leading-relaxed font-medium"><strong class="text-slate-700">মেসেজ:</strong> {{ log.message }}</p>
+                      <p class="text-[11px] text-slate-500 leading-relaxed font-medium"><strong class="text-slate-700">SMS Content:</strong> {{ log.message }}</p>
                     </div>
                   </div>
 
@@ -1079,12 +1079,12 @@ def index():
 
               </div>
 
-              <!-- ==================== সেকশন ২: নম্বর নিন (৩টি কলামে বিভক্ত ও স্টাইলিশ) ==================== -->
+              <!-- ==================== SECTION 2: Get Number ==================== -->
               <div v-if="currentTab === 'get-number'" class="space-y-6">
                 
                 <div class="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div class="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    <i class="fa-solid fa-mobile-button text-[#0088CC]"></i> আপনার কাঙ্ক্ষিত রেঞ্জ (Your Range)
+                    <i class="fa-solid fa-mobile-button text-[#0088CC]"></i> Target Range (e.g. 2250789XXX)
                   </div>
                   <input type="text" v-model="rid" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-lg font-black outline-none tracking-wider text-[#0088CC] focus:border-[#0088CC] text-center" />
                   
@@ -1093,7 +1093,7 @@ def index():
                       <input type="checkbox" v-model="nationalFormat" class="rounded text-[#0088CC]" /> National Format
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" v-model="removePlus" class="rounded text-[#0088CC]" /> Remove (+)
+                      <input type="checkbox" v-model="removePlus" class="rounded text-[#0088CC]" /> Remove (+) Prefix
                     </label>
                   </div>
 
@@ -1106,7 +1106,7 @@ def index():
                 <div class="space-y-4">
                   
                   <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 px-2">
-                    <input type="text" v-model="searchQuery" placeholder="নম্বর বা দেশ দিয়ে খুঁজুন..." class="w-full sm:w-64 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC]" />
+                    <input type="text" v-model="searchQuery" placeholder="Search by number or country..." class="w-full sm:w-64 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC]" />
                     <div class="flex gap-2 text-[10px] font-bold text-slate-400 items-center">
                       <button @click="prevPage" :disabled="currentPage === 1" class="bg-white border rounded-xl px-3 py-1.5 disabled:opacity-50 shadow-xs">Prev</button>
                       <span>Page {{ currentPage }} of {{ totalPages }}</span>
@@ -1115,15 +1115,15 @@ def index():
                   </div>
 
                   <div v-if="paginatedAllocations.length === 0" class="bg-white p-12 text-center text-slate-400 border rounded-3xl font-semibold text-xs">
-                    কোনো নম্বর তালিকা পাওয়া যায়নি।
+                    No allocated numbers found.
                   </div>
 
-                  <!-- ৩টি সেকশনে বিভক্ত নম্বর বরাদ্দ উইজেট -->
+                  <!-- Segmented Numbers View (3-Column Widget) -->
                   <div v-else class="space-y-4">
                     <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-sm hover:border-slate-300 transition">
                       <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-100">
                         
-                        <!-- ১ম সেকশন: দেশ ও নম্বর (Country & Number) -->
+                        <!-- Column 1: Country & Number -->
                         <div class="p-5 flex flex-col justify-between space-y-2">
                           <div>
                             <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Country & Number</p>
@@ -1138,7 +1138,7 @@ def index():
                           </div>
                         </div>
 
-                        <!-- ২য় সেকশন: ওটিপি ও মেসেজ (SMS) -->
+                        <!-- Column 2: OTP & Message (SMS) -->
                         <div class="p-5 flex flex-col justify-center min-w-0">
                           <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">SMS Message</p>
                           
@@ -1147,7 +1147,7 @@ def index():
                           </div>
                           
                           <div v-else-if="alloc.status === 'completed'" class="flex flex-col gap-2">
-                            <!-- ৩য় ফটো সমাধান: ছোট বক্স, শুধুমাত্র ওটিপি কোড দেখাবে এবং ক্লিক করলে সম্পূর্ণ মেসেজ কপি হবে -->
+                            <!-- Click copies full SMS message -->
                             <div @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-200 p-3 rounded-2xl text-emerald-800 text-center cursor-pointer active:scale-95 transition-all flex items-center justify-between gap-3 group">
                               <div class="text-left">
                                 <span class="text-[9px] text-emerald-600 font-bold uppercase tracking-wider block">Extracted OTP Code</span>
@@ -1155,19 +1155,19 @@ def index():
                                   {{ alloc.otp }}
                                 </span>
                               </div>
-                              <div class="bg-emerald-500 group-hover:bg-emerald-600 text-white h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition" title="ক্লিক করলেই সম্পূর্ণ ওটিপি মেসেজ কপি হবে">
+                              <div class="bg-emerald-500 group-hover:bg-emerald-600 text-white h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition" title="Click to copy full message content">
                                 <i class="fa-regular fa-copy text-xs"></i>
                               </div>
                             </div>
-                            <span class="text-[9px] text-slate-400 font-medium italic">*ওটিপি বক্সে ক্লিক করলে সম্পূর্ণ মেসেজটি কপি হবে।</span>
+                            <span class="text-[9px] text-slate-400 font-medium italic">*Clicking the OTP box will copy the full SMS message.</span>
                           </div>
                           
                           <div v-else class="text-xs text-rose-500 font-bold flex items-center gap-1">
-                            <i class="fa-solid fa-circle-exclamation"></i> Banned / Closed (18 mins over)
+                            <i class="fa-solid fa-circle-exclamation"></i> Closed (18 mins exceeded)
                           </div>
                         </div>
 
-                        <!-- ৩য় সেকশন: সময় (Time) -->
+                        <!-- Column 3: Remaining Time & Status -->
                         <div class="p-5 flex flex-col justify-between items-start md:items-end space-y-3">
                           <div class="w-full md:text-right">
                             <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Remaining Time</p>
@@ -1196,7 +1196,7 @@ def index():
 
               </div>
 
-              <!-- ==================== সেকশন ৩: কনসোল ==================== -->
+              <!-- ==================== SECTION 3: Radar Console ==================== -->
               <div v-if="currentTab === 'console'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
                   <div>
@@ -1204,12 +1204,12 @@ def index():
                       <i class="fa-solid fa-satellite-dish text-[#0088CC] text-lg animate-pulse"></i>
                       <h2 class="text-md font-black text-slate-900">GLOBAL INTERCEPT RADAR</h2>
                     </div>
-                    <p class="text-[10px] text-slate-400 font-medium mt-1">যেকোনো কার্ডের উপর ক্লিক করলেই এর রেঞ্জ কপি হয়ে যাবে।</p>
+                    <p class="text-[10px] text-slate-400 font-medium mt-1">Click on any intercepted signal card to copy its range.</p>
                   </div>
                 </div>
 
                 <div class="space-y-3">
-                  <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl text-xs">সিগন্যাল ট্র্যাকিং ইনিশিয়ালাইজ হচ্ছে...</div>
+                  <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl text-xs">Initializing global signal tracker...</div>
                   
                   <div v-else v-for="log in liveLogs" :key="log.time" @click="copyToClipboard(log.range)" class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition active:scale-[0.99] space-y-2">
                     <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
@@ -1229,42 +1229,42 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== সেকশন ৪: পেমেন্ট এবং উইথড্রয়াল ==================== -->
+              <!-- ==================== SECTION 4: Payment & Withdraw ==================== -->
               <div v-if="currentTab === 'payment'" class="space-y-6">
                 
                 <div class="bg-white p-5 rounded-3xl border border-[#0088CC]/20 shadow-xs space-y-4">
-                  <h3 class="font-black text-xs text-slate-800 flex items-center gap-2"><i class="fa-solid fa-wallet text-[#0088CC]"></i> ওয়ালেট এড্রেস সেট করুন (Binance / TRC20)</h3>
+                  <h3 class="font-black text-xs text-slate-800 flex items-center gap-2"><i class="fa-solid fa-wallet text-[#0088CC]"></i> Configure Wallet Address (Binance / TRC20)</h3>
                   
                   <div class="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div>
-                      <p class="text-[10px] text-slate-400 font-bold uppercase">BINANCE PAY ID / TRC20 ADDRESS</p>
-                      <p class="font-mono font-black text-indigo-700 mt-1 select-all break-all">{{ user?.wallet_address || 'ওয়ালেট সেট করা নেই' }}</p>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase">Binance Pay ID / TRC20 Destination</p>
+                      <p class="font-mono font-black text-indigo-700 mt-1 select-all break-all">{{ user?.wallet_address || 'No wallet address configured' }}</p>
                     </div>
                     <span class="bg-[#0088CC] text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm"><i class="fa-brands fa-bitcoin"></i> TRC20</span>
                   </div>
 
                   <div class="flex flex-col sm:flex-row gap-2 pt-2">
-                    <input type="text" v-model="walletAddressInput" placeholder="আপনার Binance Pay ID বা TRC20 এড্রেস লিখুন" class="flex-1 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC] transition" />
+                    <input type="text" v-model="walletAddressInput" placeholder="Enter Binance Pay ID or TRC20 address" class="flex-1 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC] transition" />
                     <button @click="handleUpdateWallet" :disabled="walletLoading" class="bg-[#0088CC] hover:bg-[#0077B5] text-white font-black px-5 py-3.5 rounded-2xl text-xs tracking-wider transition active:scale-95 disabled:bg-slate-300 shrink-0">
-                      {{ walletLoading ? 'সংরক্ষণ হচ্ছে...' : 'ওয়ালেট সেভ করুন' }}
+                      {{ walletLoading ? 'Saving...' : 'Save Wallet' }}
                     </button>
                   </div>
                 </div>
 
-                <!-- উইথড্রয়াল রিকোয়েস্ট উইজেট -->
+                <!-- Withdrawal Request Form -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-800 flex items-center gap-2">
-                    <i class="fa-solid fa-hand-holding-dollar text-emerald-600"></i> উইথড্রয়াল রিকোয়েস্ট (Withdraw Request)
+                    <i class="fa-solid fa-hand-holding-dollar text-emerald-600"></i> Withdraw Request
                   </h3>
-                  <p class="text-[11px] text-slate-400 leading-relaxed font-semibold">আপনার আর্ন করা টাকা আপনার সেট করা ওয়ালেটে উইথড্র করতে নিচে এমাউন্ট দিয়ে রিকোয়েস্ট পাঠান।</p>
+                  <p class="text-[11px] text-slate-400 leading-relaxed font-semibold">Request a withdrawal of your earnings to your saved wallet address.</p>
                   
                   <div class="grid sm:grid-cols-2 gap-3 text-xs font-bold">
                     <div>
-                      <label class="text-slate-400">উইথড্র এমাউন্ট (৳)</label>
-                      <input type="number" step="1" v-model="withdrawAmount" placeholder="যেমন: 50" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                      <label class="text-slate-400">Withdraw Amount (৳)</label>
+                      <input type="number" step="1" v-model="withdrawAmount" placeholder="e.g., 50" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
                     </div>
                     <div>
-                      <label class="text-slate-400">পেমেন্ট মেথড</label>
+                      <label class="text-slate-400">Payment Method</label>
                       <select v-model="withdrawMethod" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl">
                         <option value="TRC20">USDT (TRC20)</option>
                         <option value="Binance Pay">Binance Pay ID</option>
@@ -1274,24 +1274,24 @@ def index():
 
                   <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 border-t pt-3">
                     <div class="text-[11px] font-bold text-slate-500">
-                      গন্তব্য এড্রেস: <span class="text-[#0088CC] font-mono select-all">{{ user?.wallet_address || 'প্রোফাইল থেকে আগে ওয়ালেট সেট করুন।' }}</span>
+                      Destination Address: <span class="text-[#0088CC] font-mono select-all">{{ user?.wallet_address || 'Please set a wallet address first.' }}</span>
                     </div>
                     <button @click="submitWithdrawal" :disabled="!user?.wallet_address || withdrawAmount <= 0" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-6 py-3 rounded-xl text-xs transition flex items-center gap-1.5 disabled:bg-slate-200 shadow-sm active:scale-95">
-                      <i class="fa-solid fa-paper-plane"></i> উইথড্র রিকোয়েস্ট পাঠান
+                      <i class="fa-solid fa-paper-plane"></i> Submit Request
                     </button>
                   </div>
                 </div>
 
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
                   <div>
-                    <p class="text-[10px] font-bold text-slate-400 uppercase">মোট অর্জিত আয়</p>
+                    <p class="text-[10px] font-bold text-slate-400 uppercase">Total Accumulated Earnings</p>
                     <h2 class="text-xl font-black text-[#0088CC] mt-0.5">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h2>
                   </div>
                   <div class="bg-[#0088CC]/10 h-10 w-10 rounded-full flex items-center justify-center text-[#0088CC] text-md font-bold">৳</div>
                 </div>
               </div>
 
-              <!-- ==================== সেকশন ৫: প্রোফাইল (API Docs আইকন সহ) ==================== -->
+              <!-- ==================== SECTION 5: Profile Details ==================== -->
               <div v-if="currentTab === 'profile'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex items-center gap-4">
                   <div class="h-14 w-14 bg-[#0088CC] text-white font-black text-sm rounded-full flex items-center justify-center">
@@ -1304,12 +1304,12 @@ def index():
                 </div>
 
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3 text-xs">
-                  <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">প্রোফাইল ইনফো</h3>
+                  <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">Profile Information</h3>
                   <div class="space-y-4 font-semibold">
-                    <p class="text-slate-500">ইউজার আইডি: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
+                    <p class="text-slate-500">User ID Code: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
                     
                     <div class="space-y-2">
-                      <p class="text-slate-500">এپیআই কি:</p>
+                      <p class="text-slate-500">API Access Key:</p>
                       
                       <div v-if="profile && profile.api_key" class="flex flex-col gap-2">
                         <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all">
@@ -1317,20 +1317,19 @@ def index():
                         </span>
                         <div class="flex gap-2">
                           <button @click="copyToClipboard(profile.api_key)" class="bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition flex items-center gap-1">
-                            কপি করুন <i class="fa-solid fa-copy"></i>
+                            Copy API Key <i class="fa-solid fa-copy"></i>
                           </button>
                         </div>
                       </div>
                       
                       <div v-else class="space-y-2">
-                        <p class="text-amber-600 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation"></i> কোনো এپیআই কি জেনারেট করা নেই। নিচের বাটনে ক্লিক করে স্থায়ী এপিআই কি তৈরি করুন।</p>
+                        <p class="text-amber-600 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation"></i> No active API key found. Generate your API key below.</p>
                         <button @click="handleGenerateApiKey" :disabled="apiGenLoading" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-2xl text-[11px] tracking-wider transition active:scale-95 disabled:bg-slate-300">
-                          {{ apiGenLoading ? 'তৈরি হচ্ছে...' : 'GENERATE API KEY' }}
+                          {{ apiGenLoading ? 'Generating...' : 'GENERATE API KEY' }}
                         </button>
                       </div>
                     </div>
 
-                    <!-- ১ম ফটো সমাধান: এপিআই ডক্স এবং লাইভ টেস্ট ল্যাব আইকন/বাটন -->
                     <div class="mt-4 border-t pt-3 flex items-center justify-between">
                       <span class="text-slate-500 font-bold">API Documentation & Test Lab:</span>
                       <button @click="currentTab = 'api-docs'" class="bg-[#0088CC]/10 hover:bg-[#0088CC]/20 text-[#0088CC] font-black px-3.5 py-2 rounded-xl text-[10px] flex items-center gap-1.5 transition">
@@ -1342,7 +1341,7 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== সেকশন ৬: এপিআই ডক্স ও টেস্ট ল্যাব (১ম ফটো সমাধান) ==================== -->
+              <!-- ==================== SECTION 6: API Docs & Test Lab ==================== -->
               <div v-if="currentTab === 'api-docs'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div class="flex items-center gap-2">
@@ -1350,40 +1349,40 @@ def index():
                     <h2 class="text-md font-black text-slate-900">Mino API Documentation & Test Lab</h2>
                   </div>
                   <p class="text-xs text-slate-500 leading-relaxed font-semibold">
-                    আপনার এপিআই কি ব্যবহার করে সরাসরি থার্ড-পার্টি স্ক্রিপ্ট বা সফটওয়্যারে Mino Panel ইন্টিগ্রেট করুন। নিচে এপিআই রিকোয়েস্টের নিয়মাবলী ও লাইভ টেস্ট ল্যাব দেওয়া হলো।
+                    Integrate the Mino SMS service into your custom scripts, bots, or backend using your unique API Key. Below is the API request schema and live tester.
                   </p>
                 </div>
 
-                <!-- এপিআই রুট ১: Get Number -->
+                <!-- API Route: Get Number -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
                   <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET /api/v1/getnum</span>
-                  <h3 class="text-xs font-black text-slate-800 mt-2">১. নম্বর বুকিং করার এপিআই রুট</h3>
-                  <p class="text-[11px] text-slate-400">নতুন নম্বর বরাদ্দ করতে এই রুটে GET বা POST রিকোয়েস্ট পাঠান।</p>
+                  <h3 class="text-xs font-black text-slate-800 mt-2">1. Number Booking API Endpoint</h3>
+                  <p class="text-[11px] text-slate-400">Submit a GET request with your API Key and specific Range ID to allocate a number.</p>
                   <div class="bg-slate-50 p-3 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto break-all leading-relaxed border">
                     {{ apiBaseUrl }}/api/v1/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
                   </div>
                 </div>
 
-                <!-- লাইভ এপিআই টেস্ট ল্যাব -->
+                <!-- Live API Tester -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="text-xs font-black text-slate-800 flex items-center gap-2">
-                    <i class="fa-solid fa-flask text-emerald-600"></i> লাইভ এপিআই টেস্ট ল্যাব (Live Tester)
+                    <i class="fa-solid fa-flask text-emerald-600"></i> Live API Tester
                   </h3>
                   <div class="grid sm:grid-cols-2 gap-3 text-xs font-bold">
                     <div>
-                      <label class="text-slate-400">এপিআই রেঞ্জ (Range)</label>
+                      <label class="text-slate-400">Target Range ID</label>
                       <input type="text" v-model="testRange" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
                     </div>
                     <div class="flex items-end">
                       <button @click="runLiveApiTest" :disabled="testApiLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl transition flex items-center justify-center gap-1.5 disabled:bg-slate-200">
                         <i v-if="testApiLoading" class="fa-solid fa-spinner animate-spin"></i>
-                        <span>টেস্ট রিকোয়েস্ট রান করুন</span>
+                        <span>Execute API Test</span>
                       </button>
                     </div>
                   </div>
-                  <!-- টেস্ট রেসপন্স -->
+                  <!-- Test Response -->
                   <div v-if="testApiResponse" class="mt-3">
-                    <span class="text-[9px] text-slate-400 font-bold uppercase block mb-1">API Response:</span>
+                    <span class="text-[9px] text-slate-400 font-bold uppercase block mb-1">API Response Payload:</span>
                     <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[10px] font-mono overflow-x-auto select-all leading-relaxed shadow-inner">{{ testApiResponse }}</pre>
                   </div>
                 </div>
@@ -1438,13 +1437,13 @@ def index():
             const toastMessage = ref('');
             let pollingTimer = null;
 
-            // লাইভ টেস্ট ল্যাব ভেরিয়েবলস
+            // Live Test Lab Variables
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
             const apiBaseUrl = ref(window.location.origin);
 
-            // উইথড্রয়াল ভেরিয়েবলস
+            // Withdrawal Variables (Defined cleanly exactly once)
             const withdrawAmount = ref('');
             const withdrawMethod = ref('TRC20');
 
@@ -1476,13 +1475,13 @@ def index():
             const copyToClipboard = (text) => {
               if (!text) return;
               navigator.clipboard.writeText(text);
-              triggerToast("কপি করা হয়েছে: " + text);
+              triggerToast("Copied: " + text);
             };
 
             const copyFullSms = (messageText) => {
               if (!messageText) return;
               navigator.clipboard.writeText(messageText);
-              triggerToast("সম্পূর্ণ ওটিপি মেসেজ কপি হয়েছে! ✅");
+              triggerToast("Full OTP SMS message copied! ✅");
             };
 
             const filteredAllocations = computed(() => {
@@ -1552,7 +1551,7 @@ def index():
                 return;
               }
 
-              // ১. ইউজার প্রোফাইল ডাটা
+              // 1. Fetch User Profile Details
               try {
                 const profileRes = await fetch('/api/v1/auth/me', {
                   headers: { 'Authorization': `Bearer ${token}` }
@@ -1579,7 +1578,7 @@ def index():
 
               userLoaded.value = true; 
 
-              // ২. ওটিপি ও্যাক্টিভ নম্বর লাইভ সিঙ্ক
+              // 2. Poll active number allocations
               if (profile.value) {
                 try {
                   const allocRes = await fetch('/api/v1/user-allocations', {
@@ -1598,13 +1597,13 @@ def index():
                     const newCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
                     if (newCompletedCount > prevCompletedCount && prevCompletedCount > 0) {
                       playBeep();
-                      triggerToast("নতুন ওটিপি (OTP) এসেছে! 🔔");
+                      triggerToast("New OTP message received! 🔔");
                     }
                   }
                 } catch (e) {}
               }
 
-              // ৩. কনসোল সিগন্যাল ডাটা
+              // 3. Fetch Signal Radar Logs
               try {
                 const consoleRes = await fetch('/api/v1/live-console');
                 const consoleData = await consoleRes.json();
@@ -1613,7 +1612,7 @@ def index():
                 }
               } catch (e) {}
 
-              // ৪. ড্যাশবোর্ড ওটিপি রিপোর্ট ফেচ
+              // 4. Fetch Dashboard OTP Report data
               if (profile.value) {
                 try {
                   const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''));
@@ -1641,13 +1640,13 @@ def index():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("ওয়ালেট এড্রেস সফলভাবে সেভ হয়েছে! ✅");
+                  triggerToast("Wallet address successfully configured! ✅");
                   fetchData();
                 } else {
                   alert(data.message);
                 }
               } catch (e) {
-                alert("ওয়ালেট আপডেট করা সম্ভব হয়নি।");
+                alert("Failed to update wallet address.");
               }
               walletLoading.value = false;
             };
@@ -1666,18 +1665,17 @@ def index():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("এপিআই কি সফলভাবে জেনারেট হয়েছে! ✅");
+                  triggerToast("API Access Key generated! ✅");
                   fetchData();
                 } else {
                   alert(data.message);
                 }
               } catch (e) {
-                alert("এপিআই কি জেনারেট করা সম্ভব হয়নি।");
+                alert("Could not generate API Access Key.");
               }
               apiGenLoading.value = false;
             };
 
-            // উইথড্র রিকোয়েস্ট সাবমিট করা
             const submitWithdrawal = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token || withdrawAmount.value <= 0) return;
@@ -1696,21 +1694,20 @@ def index():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  alert("আপনার উইথড্রয়াল রিকোয়েস্টটি পেন্ডিং লিস্টে জমা হয়েছে। এডমিন ভেরিফাই করে অ্যাপ্রুভ করবেন।");
-                  withdrawAmount.value = 0;
+                  alert("Your withdrawal request has been submitted. The administrator will verify and process it shortly.");
+                  withdrawAmount.value = '';
                   fetchData();
                 } else {
                   alert(data.message);
                 }
               } catch (e) {
-                alert("রিকোয়েস্ট পাঠাতে সমস্যা হয়েছে।");
+                alert("An error occurred while submitting withdrawal request.");
               }
             };
 
-            // লাইভ এপিআই টেস্ট রান লজিক
             const runLiveApiTest = async () => {
               if (!profile.value?.api_key) {
-                alert("প্রথমে একটি এপিআই কি জেনারেট করে নিন।");
+                alert("Please generate an API Key first.");
                 return;
               }
               testApiLoading.value = true;
@@ -1753,7 +1750,7 @@ def index():
                 
                 if (data.status === 'success') {
                   if (isRegistering.value) {
-                     alert("আপনার অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে। অনুগ্রহ করে অ্যাডমিনের অ্যাপ্রুভালের জন্য অপেক্ষা করুন।");
+                     alert("Your account has been registered successfully. Please wait for admin approval.");
                      isRegistering.value = false;
                      authLoading.value = false;
                      return;
@@ -1766,7 +1763,7 @@ def index():
                   alert(data.message);
                 }
               } catch (err) {
-                alert(err.message || 'Authentication failed');
+                alert(err.message || 'Authentication process failed.');
               }
               authLoading.value = false;
             };
@@ -1797,13 +1794,13 @@ def index():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("নম্বর সফলভাবে বরাদ্দ হয়েছে!");
+                  triggerToast("Number successfully allocated!");
                   fetchData(); 
                 } else {
                   alert(data.message);
                 }
               } catch (err) {
-                alert('Failed to get number');
+                alert('Failed to allocate number');
               }
               loadingNumber.value = false;
             };
@@ -1824,10 +1821,6 @@ def index():
               }
             };
 
-            // উইথড্র এমাউন্ট ভ্যালু স্টোর করার জন্য উইজেট
-            const withdrawAmount = ref('');
-            const withdrawMethod = ref('TRC20');
-
             return {
               userLoaded, user, profile, authName, authEmail, authPassword, isRegistering, authLoading,
               currentTab, announcement, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
@@ -1846,7 +1839,7 @@ def index():
     return Response(html_content, mimetype='text/html')
 
 # =========================================================================
-# গ্লোবাল অ্যাডমিন প্যানেল UI পরিবেশন (২০টি নতুন ও গুরুত্বপূর্ণ ফিচার সহ)
+# Master Admin Panel UI (Localized to English)
 # =========================================================================
 @app.route('/admin', methods=['GET'])
 def admin_portal():
@@ -1868,7 +1861,7 @@ def admin_portal():
       
       <div id="admin-app">
 
-        <!-- লোডিং স্ক্রিন -->
+        <!-- Loading Screen Overlay -->
         <div v-if="loading" class="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center space-y-4 z-50">
           <div class="h-12 w-12 border-4 border-rose-600 border-t-transparent rounded-full animate-spin"></div>
           <p class="text-xs font-black text-rose-600 uppercase tracking-widest animate-pulse">MINO MASTER ADMIN LOADING...</p>
@@ -1876,12 +1869,12 @@ def admin_portal():
 
         <div v-cloak v-else>
 
-          <!-- টোস্ট নোটিফিকেশন -->
+          <!-- Toast Notifications -->
           <div v-if="toast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white font-black text-xs px-5 py-3 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
             {{ toastMessage }}
           </div>
 
-          <!-- এডমিন লগইন স্ক্রিন -->
+          <!-- Admin Login Form -->
           <div v-if="!adminToken" class="min-h-screen flex items-center justify-center p-4">
             <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-sm w-full space-y-6">
               <div class="text-center space-y-1">
@@ -1907,10 +1900,10 @@ def admin_portal():
             </div>
           </div>
 
-          <!-- এডমিন ড্যাশবোর্ড কন্টেন্ট -->
+          <!-- Master Admin Dashboard Area -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- সাইডবার -->
+            <!-- Sidebar -->
             <aside class="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
               <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
                 <span class="px-2 py-0.5 bg-rose-600 rounded text-white font-black text-xs">ADMIN</span>
@@ -1919,32 +1912,32 @@ def admin_portal():
 
               <nav class="flex-1 p-4 space-y-1">
                 <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-chart-line"></i> ড্যাশবোর্ড ওভারভিউ (Feature 1)
+                  <i class="fa-solid fa-chart-line"></i> Dashboard Overview
                 </button>
                 <button @click="currentTab = 'users'" :class="currentTab === 'users' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-users"></i> ইউজার কন্ট্রোল (Feature 2-5)
+                  <i class="fa-solid fa-users"></i> User Administration
                 </button>
                 <button @click="currentTab = 'withdrawals'" :class="currentTab === 'withdrawals' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-money-bill-transfer"></i> উইথড্র রিকোয়েস্ট (Feature 6)
+                  <i class="fa-solid fa-money-bill-transfer"></i> Withdrawal Requests
                 </button>
                 <button @click="currentTab = 'allocations'" :class="currentTab === 'allocations' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-mobile-screen"></i> নম্বর বরাদ্দ ট্র্যাকার (Feature 7)
+                  <i class="fa-solid fa-mobile-screen"></i> Number Tracking Logs
                 </button>
                 <button @click="currentTab = 'otp-logs'" :class="currentTab === 'otp-logs' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-envelope-open-text"></i> গ্লোবাল ওটিপি রিপোর্ট (Feature 8)
+                  <i class="fa-solid fa-envelope-open-text"></i> Global OTP logs
                 </button>
                 <button @click="currentTab = 'settings'" :class="currentTab === 'settings' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
-                  <i class="fa-solid fa-gears"></i> সিস্টেম কন্ট্রোল ও সেটিংস (Feature 9-20)
+                  <i class="fa-solid fa-gears"></i> System Settings & Controls
                 </button>
               </nav>
 
               <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950 text-xs font-bold">
-                <span>ADMIN ACTIVE</span>
+                <span>ADMIN PORTAL</span>
                 <button @click="logOut" class="text-rose-400 hover:text-rose-600 font-black"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
               </div>
             </aside>
 
-            <!-- মেইন কন্টেন্ট -->
+            <!-- Main Content Area -->
             <main class="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto">
               
               <header class="flex justify-between items-center border-b border-slate-200 pb-4">
@@ -1954,56 +1947,52 @@ def admin_portal():
                 </div>
               </header>
 
-              <!-- ==================== ট্যাব ১: ড্যাশবোর্ড ওভারভিউ (Feature 1) ==================== -->
+              <!-- ==================== Tab 1: Dashboard Overview ==================== -->
               <div v-if="currentTab === 'dashboard'" class="space-y-6">
-                <!-- Feature 1: অ্যাডভান্সড স্ট্যাটিস্টিক কার্ডস -->
                 <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
-                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">মোট ইউজার সংখ্যা</p>
-                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_users }} জন</h3>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Total Users</p>
+                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_users }}</h3>
                   </div>
                   <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between border-amber-200 bg-amber-50/20 animate-pulse">
-                    <p class="text-[10px] text-amber-600 font-bold uppercase tracking-wide">পেন্ডিং ইউজার (Pending)</p>
-                    <h3 class="text-2xl font-black text-amber-600 mt-2">{{ stats.pending_users }} জন</h3>
+                    <p class="text-[10px] text-amber-600 font-bold uppercase tracking-wide">Pending Registrations</p>
+                    <h3 class="text-2xl font-black text-amber-600 mt-2">{{ stats.pending_users }}</h3>
                   </div>
                   <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
-                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">মোট বরাদ্দকৃত নম্বর</p>
-                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_allocations }} বার</h3>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Total Allocations</p>
+                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_allocations }}</h3>
                   </div>
                   <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
-                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">সফল ওটিপি রিসিভ</p>
-                    <h3 class="text-2xl font-black text-emerald-600 mt-2">{{ stats.total_otps }} টি</h3>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Successful OTPs</p>
+                    <h3 class="text-2xl font-black text-emerald-600 mt-2">{{ stats.total_otps }}</h3>
                   </div>
                   <div class="bg-white p-5 rounded-2xl border border-indigo-200 bg-indigo-50/10 shadow-xs flex flex-col justify-between">
-                    <p class="text-[10px] text-indigo-600 font-bold uppercase tracking-wide">উইথড্র রিকোয়েস্ট সংখ্যা</p>
-                    <h3 class="text-2xl font-black text-indigo-600 mt-2">{{ stats.total_withdrawals }} টি</h3>
+                    <p class="text-[10px] text-indigo-600 font-bold uppercase tracking-wide">Withdrawal Requests</p>
+                    <h3 class="text-2xl font-black text-indigo-600 mt-2">{{ stats.total_withdrawals }}</h3>
                   </div>
                 </div>
 
-                <!-- কুইক অ্যাকশন এবং লাইভ সিস্টেম স্ট্যাটাস -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-3">
-                  <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">কুইক কন্ট্রোল কন্ট্রোল প্যানেল</h4>
+                  <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">System Quick Controls</h4>
                   <div class="grid md:grid-cols-2 gap-4">
                     <div class="bg-slate-50 p-4 rounded-2xl border flex items-center justify-between">
                       <div>
-                        <p class="text-xs font-black text-slate-700">মেনটেইনেন্স মোড (Maintenance Mode)</p>
-                        <p class="text-[10px] text-slate-400 mt-0.5">চালু করলে সাধারণ ইউজারদের প্যানেল সাময়িকভাবে বন্ধ হয়ে যাবে।</p>
+                        <p class="text-xs font-black text-slate-700">Maintenance Mode</p>
+                        <p class="text-[10px] text-slate-400 mt-0.5">Enabling this option suspends access to the general user panel.</p>
                       </div>
                       <button @click="toggleMaintenanceMode" :class="stats.maintenance_mode ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'" class="px-4 py-2 rounded-xl text-xs font-black transition">
-                        {{ stats.maintenance_mode ? 'চলমান (ON)' : 'বন্ধ (OFF)' }}
+                        {{ stats.maintenance_mode ? 'ACTIVE' : 'INACTIVE' }}
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- ==================== ট্যাব ২: ইউজার কন্ট্রোল (Feature 2-5) ==================== -->
+              <!-- ==================== Tab 2: User Administration ==================== -->
               <div v-if="currentTab === 'users'" class="space-y-4">
-                <!-- Feature 2: ইউজার সার্চ ও অ্যাডভান্স ফিল্টারিং -->
                 <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <input type="text" v-model="searchQuery" placeholder="ইউজার নাম, ইমেইল বা আইডি কোড দিয়ে খুঁজুন..." class="w-full sm:w-80 p-3 bg-white border rounded-2xl text-xs font-semibold outline-none focus:border-rose-600" />
+                  <input type="text" v-model="searchQuery" placeholder="Search users by name, email, or ID code..." class="w-full sm:w-80 p-3 bg-white border rounded-2xl text-xs font-semibold outline-none focus:border-rose-600" />
                   
-                  <!-- Feature 3: এক্সপোর্ট CSV বাটন -->
                   <button @click="exportUsersToCSV" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition flex items-center gap-1">
                     <i class="fa-solid fa-file-csv"></i> Export Users CSV
                   </button>
@@ -2014,19 +2003,18 @@ def admin_portal():
                     <table class="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
-                          <th class="p-4">ইউজার ও আইডি কোড</th>
-                          <th class="p-4">ইমেইল ও পাসওয়ার্ড</th>
-                          <th class="p-4">ব্যালেন্স</th>
-                          <th class="p-4">ওটিপি রেট (৳)</th>
-                          <th class="p-4">স্ট্যাটাস</th>
-                          <th class="p-4 text-right">অ্যাকশন</th>
+                          <th class="p-4">User & ID Code</th>
+                          <th class="p-4">Email & Credentials</th>
+                          <th class="p-4">Balance</th>
+                          <th class="p-4">OTP Rate (৳)</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
                         <tr v-if="filteredUsers.length === 0">
-                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">কোনো ইউজার খুঁজে পাওয়া যায়নি।</td>
+                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">No users match your criteria.</td>
                         </tr>
-                        <!-- Feature 4: ইউজার ম্যানেজমেন্ট ও ডিটেইল টেবিল -->
                         <tr v-else v-for="u in filteredUsers" :key="u.uid" class="hover:bg-slate-50/50 transition">
                           <td class="p-4">
                             <p class="font-black text-slate-900 text-sm">{{ u.name }}</p>
@@ -2040,14 +2028,13 @@ def admin_portal():
                           <td class="p-4 font-black text-slate-900 text-sm">৳ {{ parseFloat(u.balance || 0).toFixed(2) }}</td>
                           <td class="p-4 font-black text-slate-700 text-xs">৳ {{ parseFloat(u.otp_rate || 0.40).toFixed(2) }}</td>
                           <td class="p-4">
-                            <!-- Feature 5: ইউজার অনুমোদন / পেন্ডিং / ব্যান স্ট্যাটাস ট্যাগ -->
                             <span v-if="u.status === 'approved'" class="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Approved</span>
                             <span v-else-if="u.status === 'pending'" class="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Pending</span>
                             <span v-else class="bg-rose-100 text-rose-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Banned</span>
                           </td>
                           <td class="p-4 text-right space-x-1 whitespace-nowrap">
-                            <button @click="openEditModal(u)" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">এডিট</button>
-                            <button @click="deleteUser(u.uid)" class="bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">ডিলেট</button>
+                            <button @click="openEditModal(u)" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">Edit</button>
+                            <button @click="deleteUser(u.uid)" class="bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">Delete</button>
                           </td>
                         </tr>
                       </tbody>
@@ -2055,73 +2042,73 @@ def admin_portal():
                   </div>
                 </div>
 
-                <!-- ইউজার এডিট মোডাল উইন্ডো (অ্যাডভান্সড ব্যালেন্স ও রেট কন্ট্রোল) -->
+                <!-- User Modal Edit Details -->
                 <div v-if="editUser" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
                   <div class="bg-white p-6 rounded-3xl border shadow-xl max-w-md w-full space-y-4">
                     <div class="flex justify-between items-center border-b pb-2">
-                      <h3 class="font-black text-slate-900 text-sm">এডিট ইউজার: {{ editUser.name }}</h3>
+                      <h3 class="font-black text-slate-900 text-sm">Edit Account: {{ editUser.name }}</h3>
                       <button @click="editUser = null" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-xmark text-lg"></i></button>
                     </div>
 
                     <div class="space-y-3 text-xs font-bold">
                       <div>
-                        <label class="text-slate-400">ম্যানুয়াল ব্যালেন্স এডিট (৳)</label>
+                        <label class="text-slate-400">Manual Balance Edit (৳)</label>
                         <input type="number" step="0.01" v-model="editUser.balance" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm font-black outline-none focus:border-rose-600" />
                       </div>
                       <div>
-                        <label class="text-slate-400">ব্যক্তিগত ওটিপি রেট (৳)</label>
+                        <label class="text-slate-400">Custom OTP Rate (৳)</label>
                         <input type="number" step="0.01" v-model="editUser.otp_rate" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm font-black outline-none focus:border-rose-600" />
                       </div>
                       <div>
-                        <label class="text-slate-400">ইউজার পাসওয়ার্ড রিসেট (Password Overrides)</label>
+                        <label class="text-slate-400">Reset User Password</label>
                         <input type="text" v-model="editUser.password" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600" />
                       </div>
                       <div>
-                        <label class="text-slate-400">ওয়ালেট এড্রেস</label>
+                        <label class="text-slate-400">Saved Wallet Address</label>
                         <input type="text" v-model="editUser.wallet_address" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600" />
                       </div>
                       <div>
-                        <label class="text-slate-400">এপিআই কি (API KEY)</label>
+                        <label class="text-slate-400">API Key Override</label>
                         <input type="text" v-model="editUser.api_key" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none font-mono focus:border-rose-600" />
                       </div>
                       <div>
-                        <label class="text-slate-400">অ্যাকাউন্ট স্ট্যাটাস</label>
+                        <label class="text-slate-400">Account Authorization Status</label>
                         <select v-model="editUser.status" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600">
-                          <option value="approved">Approved (সক্রিয়)</option>
-                          <option value="pending">Pending (অনুমোদনহীন)</option>
-                          <option value="banned">Banned (ব্লকড)</option>
+                          <option value="approved">Approved (Active)</option>
+                          <option value="pending">Pending (Awaiting Approval)</option>
+                          <option value="banned">Banned (Disabled)</option>
                         </select>
                       </div>
                     </div>
 
                     <div class="flex gap-2 pt-2">
-                      <button @click="editUser = null" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-xl text-xs transition">বাতিল</button>
-                      <button @click="saveUserChanges" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl text-xs transition">সংরক্ষণ করুন</button>
+                      <button @click="editUser = null" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-xl text-xs transition">Cancel</button>
+                      <button @click="saveUserChanges" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl text-xs transition">Save Changes</button>
                     </div>
                   </div>
                 </div>
 
               </div>
 
-              <!-- ==================== ট্যাব ৩: উইথড্র রিকোয়েস্ট (Feature 6) ==================== -->
+              <!-- ==================== Tab 3: Withdrawal Requests ==================== -->
               <div v-if="currentTab === 'withdrawals'" class="space-y-4">
                 <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
                   <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
-                          <th class="p-4">ইউজার ও আইডি কোড</th>
-                          <th class="p-4">পরিমাণ (Amount)</th>
-                          <th class="p-4">উইথড্র মেথড</th>
-                          <th class="p-4">গন্তব্য ওয়ালেট এড্রেস</th>
-                          <th class="p-4">স্ট্যাটাস</th>
-                          <th class="p-4">সময়</th>
-                          <th class="p-4 text-right">অ্যাকশন</th>
+                          <th class="p-4">User & Account Details</th>
+                          <th class="p-4">Amount Requested</th>
+                          <th class="p-4">Method</th>
+                          <th class="p-4">Destination Wallet Address</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4">Requested At</th>
+                          <th class="p-4 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
                         <tr v-if="withdrawals.length === 0">
-                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">কোনো উইথড্র রিকোয়েস্ট জমা নেই।</td>
+                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No withdrawal requests found.</td>
                         </tr>
                         <tr v-else v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
                           <td class="p-4">
@@ -2140,7 +2127,7 @@ def admin_portal():
                           <td class="p-4 text-right space-x-1 whitespace-nowrap">
                             <button v-if="wd.status === 'pending'" @click="processWithdrawal(wd.id, 'approved')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black px-3 py-1.5 rounded-xl transition">Approve</button>
                             <button v-if="wd.status === 'pending'" @click="processWithdrawal(wd.id, 'rejected')" class="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black px-3 py-1.5 rounded-xl transition">Reject</button>
-                            <span v-else class="text-slate-400 italic">সম্পন্ন</span>
+                            <span v-else class="text-slate-400 italic">Completed</span>
                           </td>
                         </tr>
                       </tbody>
@@ -2149,24 +2136,24 @@ def admin_portal():
                 </div>
               </div>
 
-              <!-- ==================== ট্যাব ৪: নম্বর বরাদ্দ ট্র্যাকার (Feature 7) ==================== -->
+              <!-- ==================== Tab 4: Number Tracking Logs ==================== -->
               <div v-if="currentTab === 'allocations'" class="space-y-4">
                 <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
                   <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
-                          <th class="p-4">ইউজার আইডি</th>
-                          <th class="p-4">নম্বর</th>
-                          <th class="p-4">রেঞ্জ (Range)</th>
-                          <th class="p-4">দেশ ও অপারেটর</th>
-                          <th class="p-4">স্ট্যাটাস</th>
-                          <th class="p-4">সময়</th>
+                          <th class="p-4">User Key</th>
+                          <th class="p-4">Allocated Number</th>
+                          <th class="p-4">Range ID</th>
+                          <th class="p-4">Country & Provider</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4">Created At</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
                         <tr v-if="allocations.length === 0">
-                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">কোনো নম্বর বরাদ্দ ডাটা নেই।</td>
+                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">No active or historic allocations found.</td>
                         </tr>
                         <tr v-else v-for="a in allocations" :key="a.id">
                           <td class="p-4">
@@ -2191,25 +2178,25 @@ def admin_portal():
                 </div>
               </div>
 
-              <!-- ==================== ট্যাব ৫: গ্লোবাল ওটিপি রিপোর্ট (Feature 8) ==================== -->
+              <!-- ==================== Tab 5: Global OTP logs ==================== -->
               <div v-if="currentTab === 'otp-logs'" class="space-y-4">
                 <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
                   <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse text-xs">
                       <thead>
                         <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
-                          <th class="p-4">ইউজার আইডি</th>
-                          <th class="p-4">নম্বর</th>
-                          <th class="p-4">সার্ভিস</th>
-                          <th class="p-4">ওটিপি কোড</th>
-                          <th class="p-4">সম্পূর্ণ মেসেজ</th>
-                          <th class="p-4">রেভিনিউ</th>
-                          <th class="p-4">সময়</th>
+                          <th class="p-4">User Key</th>
+                          <th class="p-4">Number</th>
+                          <th class="p-4">Service</th>
+                          <th class="p-4">OTP Code</th>
+                          <th class="p-4">SMS Content</th>
+                          <th class="p-4">Revenue</th>
+                          <th class="p-4">Logged At</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
                         <tr v-if="otpLogs.length === 0">
-                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">কোনো ওটিপি ডাটা নেই।</td>
+                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No global OTP logs recorded.</td>
                         </tr>
                         <tr v-else v-for="log in otpLogs" :key="log.createdAt">
                           <td class="p-4">
@@ -2228,50 +2215,50 @@ def admin_portal():
                 </div>
               </div>
 
-              <!-- ==================== ট্যাব ৬: সিস্টেম কন্ট্রোল ও সেটিংস (Feature 9-20) ==================== -->
+              <!-- ==================== Tab 6: System Settings & Controls ==================== -->
               <div v-if="currentTab === 'settings'" class="space-y-6">
                 
-                <!-- Feature 9: অ্যানাউন্সমেন্ট ব্যানার আপডেট -->
+                <!-- Announcement Banner Controls -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <i class="fa-solid fa-bullhorn text-rose-600"></i> গ্লোবাল অ্যানাউন্সমেন্ট কন্ট্রোল (Announcement Banner)
+                    <i class="fa-solid fa-bullhorn text-rose-600"></i> Global Announcement Control Banner
                   </h3>
-                  <textarea v-model="announcementInput" rows="2" placeholder="ইউজার প্যানেলে দেখানোর জন্য নোটিশ বা অফার লিখুন..." class="w-full p-3 bg-slate-50 border rounded-xl text-xs outline-none focus:border-rose-600 font-semibold"></textarea>
+                  <textarea v-model="announcementInput" rows="2" placeholder="Enter notice updates or special offers to be displayed on user dashboards..." class="w-full p-3 bg-slate-50 border rounded-xl text-xs outline-none focus:border-rose-600 font-semibold"></textarea>
                   <button @click="updateAnnouncement" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition">
-                    ঘোষণা আপডেট করুন
+                    Publish Banner Update
                   </button>
                 </div>
 
-                <!-- Feature 10-20: ব্যাকআপ এবং ডেভেলপমেন্ট সেটিংস -->
+                <!-- Database Backup and Monitoring Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <i class="fa-solid fa-database text-rose-600"></i> এডভান্সড ডেটাবেজ ব্যাকআপ ও সিকিউরিটি
+                    <i class="fa-solid fa-database text-rose-600"></i> Database Backup & Security Monitoring
                   </h3>
                   
                   <div class="grid md:grid-cols-2 gap-4 text-xs font-semibold">
                     <div class="bg-slate-50 p-4 rounded-xl border flex flex-col justify-between">
                       <div>
-                        <p class="font-black text-slate-800">ডেটাবেজ ওয়ান-ক্লিক ব্যাকআপ (JSON)</p>
-                        <p class="text-[10px] text-slate-400 mt-1">ফায়ারবেজ ডেটাবেজের সম্পূর্ণ ডাটা এক ক্লিকে ডাউনলোড করুন।</p>
+                        <p class="font-black text-slate-800">One-Click Database Export (JSON)</p>
+                        <p class="text-[10px] text-slate-400 mt-1">Safely back up the entire Firebase DB structural tree instantly.</p>
                       </div>
                       <button @click="downloadBackup" class="w-max mt-3 bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-xl transition">
-                        ডাউনলোড ব্যাকআপ ফাইল (JSON)
+                        Download JSON Backup
                       </button>
                     </div>
 
                     <div class="bg-slate-50 p-4 rounded-xl border">
-                      <p class="font-black text-slate-800">সিস্টেম সিকিউরিটি এবং এপিআই মনিটর</p>
+                      <p class="font-black text-slate-800">Operational Configurations Active</p>
                       <ul class="text-[10px] text-slate-500 mt-2 list-disc list-inside space-y-1">
-                        <li><strong>Feature 11:</strong> IP and Location Log tracking on database.</li>
-                        <li><strong>Feature 12:</strong> Default User Sign-Up State holds in Pending.</li>
-                        <li><strong>Feature 13:</strong> Realtime STEX endpoint fallback routing configuration active.</li>
-                        <li><strong>Feature 14:</strong> Elite/Custom OTP billing configurations per User.</li>
-                        <li><strong>Feature 15:</strong> Password override control on database nodes.</li>
-                        <li><strong>Feature 16:</strong> Automatic database backup generator mapping.</li>
-                        <li><strong>Feature 17:</strong> Global maintenance routing switch active.</li>
-                        <li><strong>Feature 18:</strong> Live signal intercept radar filter mapped.</li>
-                        <li><strong>Feature 19:</strong> Safe environment credential string decoding.</li>
-                        <li><strong>Feature 20:</strong> Dynamic 18-minute number expiry timers synced.</li>
+                        <li><strong>Rule 11:</strong> Verification check active on Firebase database operations.</li>
+                        <li><strong>Rule 12:</strong> Default signup state holds as Pending for admin validation.</li>
+                        <li><strong>Rule 13:</strong> Realtime fallback routing config dynamically mapped to secondary gateways.</li>
+                        <li><strong>Rule 14:</strong> Custom OTP custom rates configurable per unique User ID.</li>
+                        <li><strong>Rule 15:</strong> Password override structures active on backend user structures.</li>
+                        <li><strong>Rule 16:</strong> Automatic database backup generators and sync loops.</li>
+                        <li><strong>Rule 17:</strong> Global maintenance status checks enabled on before_request scopes.</li>
+                        <li><strong>Rule 18:</strong> Signal Intercept radars mapped to STEX streams.</li>
+                        <li><strong>Rule 19:</strong> Safe environment private credentials decoded during start cycles.</li>
+                        <li><strong>Rule 20:</strong> Dynamic 18-minute allocation countdown timer actively enforced.</li>
                       </ul>
                     </div>
                   </div>
@@ -2337,13 +2324,13 @@ def admin_portal():
                 if (data.status === 'success') {
                   adminToken.value = data.token;
                   localStorage.setItem('mino_admin_token', data.token);
-                  triggerToast("মাস্টার পোর্টাল অ্যাক্সেস গ্রান্টেড! 🔓");
+                  triggerToast("Portal Access Granted! 🔓");
                   fetchDashboardData();
                 } else {
-                  alert(data.message || 'ভুল ইউজারনেম বা পাসওয়ার্ড।');
+                  alert(data.message || 'Invalid admin credentials entered.');
                 }
               } catch (e) {
-                alert("সার্ভার কানেকশন ত্রুটি।");
+                alert("Server connection failed.");
               }
               authLoading.value = false;
             };
@@ -2351,7 +2338,7 @@ def admin_portal():
             const logOut = () => {
               localStorage.removeItem('mino_admin_token');
               adminToken.value = '';
-              triggerToast("সফলভাবে লগআউট করা হয়েছে। 🔒");
+              triggerToast("Logged out securely. 🔒");
             };
 
             const fetchDashboardData = async () => {
@@ -2360,7 +2347,7 @@ def admin_portal():
                 return;
               }
               try {
-                // ১. স্ট্যাটস ফেচ
+                // 1. Fetch Stats
                 const statRes = await fetch('/api/v1/admin/dashboard', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -2368,28 +2355,28 @@ def admin_portal():
                 const statData = await statRes.json();
                 if (statData.status === 'success') stats.value = statData.stats;
 
-                // ২. ইউজার ফেচ
+                // 2. Fetch Users
                 const userRes = await fetch('/api/v1/admin/users', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
                 const userData = await userRes.json();
                 if (userData.status === 'success') users.value = userData.users;
 
-                // ৩. নম্বর রিকোয়েস্ট ট্র্যাকার ফেচ
+                // 3. Fetch allocations
                 const allocRes = await fetch('/api/v1/admin/allocations', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
                 const allocData = await allocRes.json();
                 if (allocData.status === 'success') allocations.value = allocData.allocations;
 
-                // ৪. গ্লোবাল ওটিপি ফেচ
+                // 4. Fetch OTP Logs
                 const logRes = await fetch('/api/v1/admin/otp-logs', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
                 const logData = await logRes.json();
                 if (logData.status === 'success') otpLogs.value = logData.otp_logs;
 
-                // ৫. উইথড্রয়াল ফেচ
+                // 5. Fetch Withdrawals
                 const wdRes = await fetch('/api/v1/admin/withdrawals', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -2416,7 +2403,7 @@ def admin_portal():
                 const data = await res.json();
                 if (data.status === 'success') {
                   stats.value.maintenance_mode = data.maintenance_mode;
-                  triggerToast(`মেনটেইনেন্স মোড ${data.maintenance_mode ? 'চালু' : 'বন্ধ'} করা হয়েছে। 🛠️`);
+                  triggerToast(`Maintenance mode turned ${data.maintenance_mode ? 'ON' : 'OFF'}. 🛠️`);
                 }
               } catch (e) {}
             };
@@ -2433,13 +2420,13 @@ def admin_portal():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("গ্লোবাল অ্যানাউন্সমেন্ট আপডেট করা হয়েছে! 📢");
+                  triggerToast("Global notice updated! 📢");
                 }
               } catch (e) {}
             };
 
             const processWithdrawal = async (id, action) => {
-              if (!confirm(`আপনি কি এই উইথড্র রিকোয়েস্টটি ${action} করতে চান?`)) return;
+              if (!confirm(`Are you sure you want to change this withdrawal request status to ${action}?`)) return;
               try {
                 const res = await fetch('/api/v1/admin/withdrawals/action', {
                   method: 'POST',
@@ -2451,7 +2438,7 @@ def admin_portal():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast(`Withdrawal request has been ${action}.`);
+                  triggerToast(`Withdrawal request has been marked as ${action}.`);
                   fetchDashboardData();
                 } else {
                   alert(data.message);
@@ -2473,7 +2460,7 @@ def admin_portal():
                   document.body.appendChild(downloadAnchor);
                   downloadAnchor.click();
                   downloadAnchor.remove();
-                  triggerToast("ডেটাবেজ ব্যাকআপ ফাইল তৈরি সম্পন্ন হয়েছে! 📥");
+                  triggerToast("Database JSON export download initiated! 📥");
                 }
               } catch (e) {}
             };
@@ -2493,7 +2480,7 @@ def admin_portal():
               document.body.appendChild(link);
               link.click();
               link.remove();
-              triggerToast("ইউজার লিস্ট CSV ফাইল ডাউনলোড সম্পন্ন হয়েছে! 📊");
+              triggerToast("User database exported to CSV! 📊");
             };
 
             const filteredUsers = computed(() => {
@@ -2524,7 +2511,7 @@ def admin_portal():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("ইউজার তথ্য সফলভাবে আপডেট করা হয়েছে! ✅");
+                  triggerToast("User account details successfully updated! ✅");
                   editUser.value = null;
                   fetchDashboardData();
                 } else {
@@ -2534,7 +2521,7 @@ def admin_portal():
             };
 
             const deleteUser = async (uid) => {
-              if (!confirm("আপনি কি নিশ্চিতভাবে এই ইউজার অ্যাকাউন্টটি মুছে ফেলতে চান?")) return;
+              if (!confirm("Are you sure you want to permanently delete this user account?")) return;
               try {
                 const res = await fetch('/api/v1/admin/users/delete', {
                   method: 'POST',
@@ -2546,7 +2533,7 @@ def admin_portal():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("ইউজার সফলভাবে ডিলেট করা হয়েছে। 🗑️");
+                  triggerToast("User permanently removed. 🗑️");
                   fetchDashboardData();
                 }
               } catch (e) {}
