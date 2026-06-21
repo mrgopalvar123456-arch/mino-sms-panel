@@ -34,7 +34,7 @@ if raw_private_key:
     # Vercel/Render-এর environment variable-এর \n কে আসল নিউলাইনে রূপান্তর করার জন্য
     private_key = raw_private_key.replace("\\n", "\n")
 else:
-    # ব্যাকআপ হার্ডকোডেড প্রাইভেট কী (ট্রিপল কোটেশন ব্যবহার করে আসল নিউলাইনে ডিফাইন করা হলো, যাতে ব্যাকস্ল্যাশ সংক্রান্ত বাগ না আসে)
+    # ব্যাকআপ হার্ডকোডেড প্রাইভেট কী (আসল নিউলাইনে ডিফাইন করা হলো, যাতে ব্যাকস্ল্যাশ সংক্রান্ত বাগ না আসে)
     private_key = """-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ
 fqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy
@@ -363,12 +363,6 @@ def index():
     </head>
     <body class="text-slate-700 font-sans">
       <div id="app" v-cloak>
-        
-        <!-- এনভায়রনমেন্ট ভেরিয়েবল বা ফায়ারবেস কনফিগারেশন এরর ব্যানার -->
-        <div v-if="initError" class="bg-rose-600 text-white px-4 py-3 text-center text-sm font-bold shadow-md flex items-center justify-center gap-2">
-          <i class="fa-solid fa-circle-exclamation text-lg animate-bounce"></i>
-          <span>সার্ভার সতর্কবার্তা: {{ initError }}</span>
-        </div>
 
         <!-- লগইন / সাইনআপ উইন্ডো -->
         <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
@@ -377,6 +371,15 @@ def index():
               <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md">MINO</span>
               <h1 class="text-2xl font-black text-slate-900">MINO SMS PANEL</h1>
               <p class="text-xs font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register account' : 'Sign in to network' }}</p>
+            </div>
+
+            <!-- ক্লায়েন্ট-সাইড এরর সতর্কবার্তা কার্ডের ভেতরেই দেখানোর ব্যবস্থা -->
+            <div v-if="initError" class="bg-rose-50 border border-rose-200 text-rose-600 px-4 py-3 rounded-xl text-xs font-semibold flex items-start gap-2">
+              <i class="fa-solid fa-circle-exclamation text-base mt-0.5 animate-pulse"></i>
+              <div>
+                <p class="font-bold">সিস্টেম সতর্কবার্তা:</p>
+                <p class="mt-1 leading-relaxed">{{ initError }}</p>
+              </div>
             </div>
 
             <form @submit.prevent="handleAuth" class="space-y-4">
@@ -389,7 +392,8 @@ def index():
                 <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
 
-              <button type="submit" :disabled="authLoading || initError" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
+              <!-- বাটনটি আর কখনো লক (Disabled) হয়ে থাকবে না -->
+              <button type="submit" :disabled="authLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
                 {{ authLoading ? 'Please wait...' : (isRegistering ? 'REGISTER' : 'LOG IN') }}
               </button>
             </form>
@@ -903,6 +907,10 @@ def index():
             });
 
             const handleAuth = async () => {
+              if (initError.value) {
+                alert("ফায়ারবেস ইনিশিয়ালাইজেশন সমস্যা: " + initError.value);
+                return;
+              }
               if (!auth) {
                 alert("ফায়ারবেস সঠিকভাবে কনফিগার করা হয়নি।");
                 return;
