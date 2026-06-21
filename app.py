@@ -29,7 +29,6 @@ FIREBASE_CLIENT_CONFIG = {
 }
 
 # ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
-# (নিরাপত্তার সুবিধার্থে এগুলো এনভায়রনমেন্ট ভেরিয়েবল থেকে নেওয়ার চেষ্টা করবে, না পেলে হার্ডকোড করা মান ব্যবহার করবে)
 firebase_creds = {
   "type": "service_account",
   "project_id": "all-panel-support",
@@ -318,9 +317,12 @@ def index():
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+      
+      <!-- Firebase Compat SDKs (ভার্সন ৯.২৩.০ অনুযায়ী লাইব্রেরি লোড করা হয়েছে) -->
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-analytics-compat.js"></script>
       <style>
         [v-cloak] { display: none; }
         body { background-color: #F3F7FA; }
@@ -771,27 +773,35 @@ def index():
       <script>
         const { createApp, ref, onMounted, watch } = Vue;
 
+        // আপনার দেওয়া নতুন Firebase Web SDK কনফিগারেশন (measurementId সহ)
         const firebaseConfig = {
-          apiKey: "__API_KEY__",
-          authDomain: "__AUTH_DOMAIN__",
-          projectId: "all-panel-support", 
-          storageBucket: "__STORAGE_BUCKET__",
-          messagingSenderId: "__MESSAGING_SENDER_ID__",
-          appId: "__APP_ID__"
+          apiKey: "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE",
+          authDomain: "all-panel-support.firebaseapp.com",
+          projectId: "all-panel-support",
+          storageBucket: "all-panel-support.firebasestorage.app",
+          messagingSenderId: "189478800502",
+          appId: "1:189478800502:web:e57ff2fefaa3d082b8a357",
+          measurementId: "G-6Y6N1NY0XM"
         };
 
         let auth = null;
         let db = null;
+        let analytics = null;
         let initErrorMsg = "";
 
-        // ব্রাউজার সাইড ফায়ারবেস ইন্টিগ্রেশন সেফ-চেক
+        // ফায়ারবেস লোড করার ট্রাই-ক্যাচ ব্লক
         try {
           if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("__API_KEY__") || firebaseConfig.apiKey === "") {
             throw new Error("ফায়ারবেস API Key অনুপস্থিত। আপনার ক্লাউড হোস্টিংয়ে environment variables যুক্ত করুন।");
           }
+          // Compat SDK দিয়ে ফায়ারবেস ইনিশিয়ালাইজেশন
           firebase.initializeApp(firebaseConfig);
           auth = firebase.auth();
           db = firebase.firestore();
+          
+          if (firebaseConfig.measurementId) {
+            analytics = firebase.analytics();
+          }
         } catch (err) {
           console.error("Firebase Initialization Failed:", err);
           initErrorMsg = err.message || "ফায়ারবেস লোড করতে সমস্যা হয়েছে।";
@@ -955,14 +965,6 @@ def index():
     </body>
     </html>
     """
-    # পরিবর্তন করার পর কোডটি এমন হবে:
-    html_content = html_content.replace("__API_KEY__", "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE")
-    html_content = html_content.replace("__AUTH_DOMAIN__", "all-panel-support.firebaseapp.com")
-    html_content = html_content.replace("__PROJECT_ID__", "all-panel-support")
-    html_content = html_content.replace("__STORAGE_BUCKET__", "all-panel-support.firebasestorage.app")
-    html_content = html_content.replace("__MESSAGING_SENDER_ID__", "189478800502")
-    html_content = html_content.replace("__APP_ID__", "1:189478800502:web:e57ff2fefaa3d082b8a357")
-
     return Response(html_content, mimetype='text/html')
 
 if __name__ == '__main__':
