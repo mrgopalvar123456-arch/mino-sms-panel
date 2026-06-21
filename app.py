@@ -20,12 +20,12 @@ def after_request(response):
 # ফায়ারবেস ক্লায়েন্ট কনফিগারেশন (এখানে আপনার ফায়ারবেস ওয়েব অ্যাপের মানগুলো বসিয়ে দিন)
 # =========================================================================
 FIREBASE_CLIENT_CONFIG = {
-    "apiKey": "এখানে_আপনার_Firebase_Web_API_Key_দিন",           # উদাহরণ: "AIzaSy..."
+    "apiKey": "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE",           
     "authDomain": "all-panel-support.firebaseapp.com",
     "projectId": "all-panel-support",
-    "storageBucket": "all-panel-support.appspot.com",
-    "messagingSenderId": "এখানে_আপনার_Messaging_Sender_ID_দিন", # উদাহরণ: "112981..."
-    "appId": "এখানে_আপনার_Firebase_App_ID_দিন"                 # উদাহরণ: "1:112981..."
+    "storageBucket": "all-panel-support.firebasestorage.app",
+    "messagingSenderId": "189478800502", 
+    "appId": "1:189478800502:web:e57ff2fefaa3d082b8a357"                 
 }
 
 # ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
@@ -955,12 +955,13 @@ def index():
     </body>
     </html>
     """
-    html_content = html_content.replace("__API_KEY__", os.getenv("NEXT_PUBLIC_FIREBASE_API_KEY", ""))
-    html_content = html_content.replace("__AUTH_DOMAIN__", os.getenv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "all-panel-support.firebaseapp.com"))
+    # পরিবর্তন করার পর কোডটি এমন হবে:
+    html_content = html_content.replace("__API_KEY__", "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE")
+    html_content = html_content.replace("__AUTH_DOMAIN__", "all-panel-support.firebaseapp.com")
     html_content = html_content.replace("__PROJECT_ID__", "all-panel-support")
-    html_content = html_content.replace("__STORAGE_BUCKET__", "all-panel-support.appspot.com")
-    html_content = html_content.replace("__MESSAGING_SENDER_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", ""))
-    html_content = html_content.replace("__APP_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_APP_ID", ""))
+    html_content = html_content.replace("__STORAGE_BUCKET__", "all-panel-support.firebasestorage.app")
+    html_content = html_content.replace("__MESSAGING_SENDER_ID__", "189478800502")
+    html_content = html_content.replace("__APP_ID__", "1:189478800502:web:e57ff2fefaa3d082b8a357")
 
     return Response(html_content, mimetype='text/html')
 
