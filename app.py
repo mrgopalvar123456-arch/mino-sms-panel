@@ -1,4 +1,3 @@
-
 import os
 import re
 import json
@@ -677,7 +676,6 @@ def admin_api_dashboard():
         total_allocations = len(db.get("allocated_numbers", []))
         total_otps = len(db.get("otp_logs", []))
         
-        # মোট উইথড্রয়াল রিকোয়েস্ট সংখ্যা
         withdrawals = db.get("withdrawals", {})
         total_withdrawals = len(withdrawals) if isinstance(withdrawals, dict) else len(firebase_to_list(withdrawals))
         
@@ -820,7 +818,6 @@ def admin_withdrawal_action():
             return jsonify({'status': 'error', 'message': 'Request already processed'}), 400
         
         if action == 'rejected':
-            # রিজেক্ট হলে ইউজারকে টাকা রিফান্ড করা
             u_ref = fb_db.reference(f"/users/{wd_data['userId']}")
             user_data = u_ref.get()
             if user_data:
@@ -1363,7 +1360,7 @@ def index():
                   <h3 class="text-xs font-black text-slate-800 mt-2">১. নম্বর বুকিং করার এপিআই রুট</h3>
                   <p class="text-[11px] text-slate-400">নতুন নম্বর বরাদ্দ করতে এই রুটে GET বা POST রিকোয়েস্ট পাঠান।</p>
                   <div class="bg-slate-50 p-3 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto break-all leading-relaxed border">
-                    {{ window.location.origin }}/api/v1/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
+                    {{ apiBaseUrl }}/api/v1/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
                   </div>
                 </div>
 
@@ -1445,6 +1442,7 @@ def index():
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
+            const apiBaseUrl = ref(window.location.origin);
 
             // উইথড্রয়াল ভেরিয়েবলস
             const withdrawAmount = ref('');
@@ -1836,7 +1834,7 @@ def index():
               allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
               handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
-              apiGenLoading, handleGenerateApiKey, runLiveApiTest, testRange, testApiLoading, testApiResponse,
+              apiGenLoading, handleGenerateApiKey, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
               withdrawAmount, withdrawMethod, submitWithdrawal
             };
           }
