@@ -113,7 +113,7 @@ def get_current_user(db):
         if user:
             return user
 
-    # অল্টারনেটিভ চেক: হেডার বা কুয়েরি কি
+    # অল্টারনে티브 চেক: হেডার বা কুয়েরি কি
     api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
     if api_key:
         for u in db["users"].values():
@@ -479,9 +479,10 @@ def index():
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>MINO SMS PANEL</title>
-      <!-- উচ্চ গতিসম্পন্ন এবং ক্যাশড সিডিএন লিংক ব্যবহার করা হলো -->
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.js"></script>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.js"></script>
+      <!-- Tailwind CSS Play CDN (Arbitrary v3+ values সাপোর্ট করার জন্য) -->
+      <script src="https://cdn.tailwindcss.com"></script>
+      <!-- Vue 3 Global Production CDN (সঠিক .min.js ফাইল লোড করা হলো) -->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
       <style>
         [v-cloak] { display: none; }
@@ -931,6 +932,9 @@ def index():
             // কপি ক্লিপবোর্ড টোস্ট
             const showToast = ref(false);
             const toastMessage = ref('');
+            
+            // পোলিং টাইমার ডিক্লেয়ার করা হলো (যাতে এরর না আসে)
+            let pollingTimer = null; 
 
             // নোটিফিকেশন সাউন্ড প্লেয়ার (Beep Sound)
             const playBeep = () => {
