@@ -5,8 +5,99 @@ import secrets
 import datetime
 import requests
 from flask import Flask, request, jsonify, Response
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import db as fb_db
 
 app = Flask(__name__)
+
+# =========================================================================
+# ফায়ারবেজ এডমিন SDK ইন্টিগ্রেশন (সার্ভিস অ্যাকাউন্ট কোডের ভেতরে হার্ডকোডেড)
+# =========================================================================
+# আপনার ফায়ারবেজ রিয়েলটাইম ডাটাবেজের URL (লোকেশন পরিবর্তন করলে শুধু এই URL টি এডিট করবেন):
+FIREBASE_DB_URL = "https://all-panel-support-default-rtdb.firebaseio.com/"
+
+CRED_DICT = {
+  "type": "service_account",
+  "project_id": "all-panel-support",
+  "private_key_id": "f482e69eaee23c8be49b2394631ac36dd9201617",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ\nfqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy\nB6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh\ns+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q\ndzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5\nov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk\nXZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz\nC1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV\n8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00\nNouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a\nFpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO\n5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU\nOXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG\n3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ\n3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy\nssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj\n682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG\n3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl\nmJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b\nKEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV\nkK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA\nVKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL\nx4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ\nW9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl\n5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N\n3QfQiRb/u6F6f+gzT+v6JBU=\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-adminsdk-fbsvc@all-panel-support.iam.gserviceaccount.com",
+  "client_id": "112981434071027857034",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40all-panel-support.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
+
+# ফায়ারবেজ অ্যাপ ইনিশিয়েলাইজেশন
+if not firebase_admin._apps:
+    cred = credentials.Certificate(CRED_DICT)
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': FIREBASE_DB_URL
+    })
+
+# =========================================================================
+# ফায়ারবেজ ডাটাবেজ হ্যান্ডলারস
+# =========================================================================
+MEMORY_DB = None
+
+# ফায়ারবেজের ডিকশনারি ডাটাকে পাইথন লিস্টে রূপান্তর করার কনভার্টার
+def firebase_to_list(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        try:
+            sorted_keys = sorted(data.keys(), key=lambda x: int(x))
+            return [data[k] for k in sorted_keys]
+        except ValueError:
+            return list(data.values())
+    return []
+
+def load_db():
+    global MEMORY_DB
+    try:
+        ref = fb_db.reference('/')
+        db_data = ref.get()
+        
+        if not db_data or not isinstance(db_data, dict):
+            db_data = {
+                "users": {},
+                "allocated_numbers": [],
+                "otp_logs": [],
+                "live_console": []
+            }
+        
+        # নিশ্চিত করা যেন প্রয়োজনীয় ফিল্ডগুলো থাকে
+        if "users" not in db_data or not isinstance(db_data["users"], dict): 
+            db_data["users"] = {}
+            
+        db_data["allocated_numbers"] = firebase_to_list(db_data.get("allocated_numbers"))
+        db_data["otp_logs"] = firebase_to_list(db_data.get("otp_logs"))
+        db_data["live_console"] = firebase_to_list(db_data.get("live_console"))
+        
+        MEMORY_DB = db_data
+        return MEMORY_DB
+    except Exception as e:
+        print("Firebase Admin Load Error:", e)
+        if MEMORY_DB is not None:
+            return MEMORY_DB
+        return {
+            "users": {},
+            "allocated_numbers": [],
+            "otp_logs": [],
+            "live_console": []
+        }
+
+def save_db(db_data):
+    global MEMORY_DB
+    MEMORY_DB = db_data
+    try:
+        ref = fb_db.reference('/')
+        ref.set(db_data)
+    except Exception as e:
+        print("Firebase Admin Save Error:", e)
 
 # =========================================================================
 # CORS এবং এন্টি-ক্যাশিং পলিসি (মোবাইল অ্যাপ ও ব্রাউজারে ব্লকিং এড়াতে)
@@ -43,60 +134,6 @@ def parse_iso_datetime(dt_str):
             return datetime.datetime.strptime(dt_str.split('.')[0], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
         except Exception:
             return datetime.datetime.now(datetime.timezone.utc)
-
-# =========================================================================
-# ডাটাবেজ লোডার ও সেভার
-# =========================================================================
-DB_FILE = "db.json"
-MEMORY_DB = None
-
-def load_db():
-    global MEMORY_DB
-    if MEMORY_DB is not None:
-        return MEMORY_DB
-    
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
-                MEMORY_DB = json.load(f)
-                return MEMORY_DB
-        except Exception:
-            pass
-            
-    tmp_path = "/tmp/db.json"
-    if os.path.exists(tmp_path):
-        try:
-            with open(tmp_path, 'r', encoding='utf-8') as f:
-                MEMORY_DB = json.load(f)
-                return MEMORY_DB
-        except Exception:
-            pass
-
-    MEMORY_DB = {
-        "users": {},
-        "allocated_numbers": [],
-        "otp_logs": [],
-        "live_console": []
-    }
-    return MEMORY_DB
-
-def save_db(db_data):
-    global MEMORY_DB
-    MEMORY_DB = db_data
-    try:
-        with open(DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(db_data, f, indent=4, ensure_ascii=False)
-            return
-    except Exception:
-        pass
-        
-    try:
-        tmp_path = "/tmp/db.json"
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            json.dump(db_data, f, indent=4, ensure_ascii=False)
-            return
-    except Exception:
-        pass
 
 STEX_API_KEY = "MWF1Z0QG1DJ"
 STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tness/@public/api"
@@ -207,7 +244,6 @@ def generate_api_key():
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
         
         user_id = user['uid']
-        # যদি এপিআই কি না থাকে তবেই নতুন তৈরি করবে
         if not db["users"][user_id].get('api_key'):
             unique_key = 'mino_live_' + secrets.token_hex(16)
             db["users"][user_id]['api_key'] = unique_key
@@ -240,7 +276,6 @@ def update_wallet():
 @app.route('/api/v1/getnum', methods=['GET', 'POST'])
 def getnum():
     try:
-        # GET এবং POST উভয় রিকোয়েস্ট থেকে ডাটা রিসিভ করার সাপোর্ট
         if request.method == 'POST':
             data = request.json or {}
             rid = data.get('rid')
@@ -265,7 +300,7 @@ def getnum():
         stex_data = None
         last_error = "No number available on this range"
 
-        # গেট রিকোয়েস্ট ট্রাই
+        # GET রিকোয়েস্ট ট্রাই
         try:
             params = {
                 'rid': clean_rid,
@@ -288,7 +323,7 @@ def getnum():
         except Exception as e:
             print("GET Attempt Failed:", e)
 
-        # পোস্ট রিকোয়েস্ট ট্রাই
+        # POST রিকোয়েস্ট ট্রাই
         if not stex_data:
             try:
                 payload = {
@@ -498,7 +533,7 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# ফ্রন্টএন্ড UI
+# ফ্রন্টএন্ড UI পরিবেশন
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -573,7 +608,7 @@ def index():
           <!-- মেইন প্যানেল ড্যাশবোর্ড -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- সাইডবার -->
+            <!-- ডেস্কটপ সাইডবার -->
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -891,11 +926,9 @@ def index():
                   <div class="space-y-4 font-semibold">
                     <p class="text-slate-500">ইউজার আইডি: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
                     
-                    <!-- এপিআই কি সেকশন -->
                     <div class="space-y-2">
                       <p class="text-slate-500">এপিআই কি:</p>
                       
-                      <!-- এপিআই কি অলরেডি থাকলে দেখাবে -->
                       <div v-if="profile && profile.api_key" class="flex flex-col gap-2">
                         <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all">
                           {{ profile.api_key }}
@@ -905,7 +938,6 @@ def index():
                         </button>
                       </div>
                       
-                      <!-- এপিআই কি না থাকলে জেনারেট বাটন দেখাবে -->
                       <div v-else class="space-y-2">
                         <p class="text-amber-600 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation"></i> কোনো এপিআই কি জেনারেট করা নেই। নিচের বাটনে ক্লিক করে স্থায়ী এপিআই কি তৈরি করুন।</p>
                         <button @click="handleGenerateApiKey" :disabled="apiGenLoading" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-2xl text-[11px] tracking-wider transition active:scale-95 disabled:bg-slate-300">
@@ -1050,7 +1082,6 @@ def index():
               });
             };
 
-            // ৩ সেকেন্ড পর পর পোলিং করা হবে, যাতে Vercel সহজে ক্র্যাশ বা ওভারলোড না হয়
             const startPolling = () => {
               stopPolling();
               fetchData();
@@ -1078,7 +1109,6 @@ def index():
                 });
                 
                 if (profileRes.status === 401) {
-                  // এপিআই যদি আসলেই Unauthorized বলে তবেই কেবল লগআউট হবে, নেটওয়ার্কের সাধারণ এরর এ লগআউট হবে না
                   signOut();
                   userLoaded.value = true;
                   return;
@@ -1093,7 +1123,7 @@ def index():
                   }
                 }
               } catch (e) {
-                console.log("Profile Fetch Error (Ignored for safety):", e);
+                console.log("Profile Fetch Error:", e);
               }
 
               userLoaded.value = true; 
@@ -1144,7 +1174,6 @@ def index():
               }
             };
 
-            // ওয়ালেট সেভ করার হ্যান্ডেলার
             const handleUpdateWallet = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token || !walletAddressInput.value.trim()) return;
@@ -1172,7 +1201,6 @@ def index():
               walletLoading.value = false;
             };
 
-            // প্রোফাইল থেকে এপিআই কী জেনারেট করার হ্যান্ডেলার
             const handleGenerateApiKey = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token) return;
