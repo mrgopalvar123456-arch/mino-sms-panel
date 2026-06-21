@@ -2,7 +2,7 @@ import os
 import secrets
 import datetime
 import requests
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, Response # Response যুক্ত করা হয়েছে
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 
@@ -16,7 +16,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
-# ১. সরাসরি আপনার ফায়ারবেস ক্রেডেনশিয়াল জেসন
+# ১. ফায়ারবেস ক্রেডেনশিয়াল জেসন
 firebase_creds = {
   "type": "service_account",
   "project_id": "all-panel-support",
@@ -31,7 +31,6 @@ firebase_creds = {
   "universe_domain": "googleapis.com"
 }
 
-# ৩. টাইপো সংশোধন করা হলো (firebase_creds রেফারেন্স করা হয়েছে)
 if not firebase_admin._apps:
     cred = credentials.Certificate(firebase_creds)
     firebase_admin.initialize_app(cred)
@@ -92,7 +91,7 @@ def getnum():
         if not api_key or not rid:
             return jsonify({'status': 'error', 'message': 'API Key or RID missing'}), 400
 
-        users_ref = db.collection('profiles').where('api_key', '==', apiKey or api_key).limit(1).stream()
+        users_ref = db.collection('profiles').where('api_key', '==', api_key).limit(1).stream()
         user_doc = next(users_ref, None)
         if not user_doc:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
@@ -209,6 +208,7 @@ def get_otp():
                     service = 'instagram'
 
                 if service:
+                    # ব্যালেন্স ট্রানজেকশন আপডেট
                     user_ref = db.collection('profiles').document(user_id)
                     
                     @firestore.transactional
@@ -220,6 +220,7 @@ def get_otp():
                     transaction = db.transaction()
                     update_balance_transaction(transaction, user_ref)
 
+                    # ওটিপি লগ স্টোর
                     db.collection('otp_logs').add({
                         'userId': user_id,
                         'number': number,
@@ -291,11 +292,10 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page)
+# ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page - Pure Response to prevent Jinja Collision)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
-    # .replace() ব্যবহারের মাধ্যমে ক্লায়েন্ট সাইড এপিআই কি নিরাপদে ইনজেক্ট করা হচ্ছে
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
@@ -318,7 +318,7 @@ def index():
       <div id="app" v-cloak>
         
         <!-- লগইন / সাইনআপ উইন্ডো -->
-        <div v-if="!user" class="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
           <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
             <div class="text-center space-y-2">
               <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md">MINO</span>
@@ -482,7 +482,7 @@ def index():
                   <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
                     <div class="bg-purple-50 h-12 w-12 rounded-full flex items-center justify-center text-purple-600"><i class="fa-solid fa-folder-closed text-lg"></i></div>
                     <div>
-                      <p class="text-xs text-slate-400 font-semibold">গতকালকের সফল নাম্বার</p>
+                      <p class="text-xs text-slate-400 font-semibold">昨日 সফল নাম্বার</p>
                       <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
                     </div>
                   </div>
@@ -753,7 +753,6 @@ def index():
       <script>
         const { createApp, ref, onMounted, watch } = Vue;
 
-        // আপনার ফায়ারবেস ক্লায়েন্ট কনফিগারেশন কী-গুলো এখানে বসিয়ে নিন
         const firebaseConfig = {
           apiKey: "__API_KEY__",
           authDomain: "__AUTH_DOMAIN__",
@@ -868,7 +867,7 @@ def index():
               loadingNumber.value = true;
               otpResult.value = null;
               try {
-                const res = await fetch(\`/api/v1/getnum?rid=\${rid.value}&api_key=\${profile.value.api_key}\`);
+                const res = await fetch('/api/v1/getnum?rid=' + rid.value + '&api_key=' + profile.value.api_key);
                 const data = await res.json();
                 if (data.status === 'success') {
                   activeNumber.value = data.number;
@@ -884,7 +883,7 @@ def index():
             const handleCheckOtp = async () => {
               if (!activeNumber.value || !profile.value) return;
               try {
-                const res = await fetch(\`/api/v1/get-otp?number=\${activeNumber.value}&api_key=\${profile.value.api_key}\`);
+                const res = await fetch('/api/v1/get-otp?number=' + activeNumber.value + '&api_key=' + profile.value.api_key);
                 const data = await res.json();
                 if (data.status === 'success') {
                   otpResult.value = data;
@@ -899,7 +898,7 @@ def index():
             const formatTime = (seconds) => {
               const mins = Math.floor(seconds / 60);
               const secs = seconds % 60;
-              return \`\${mins}:\\u200B\${secs < 10 ? '0' : ''}\${secs}\`;
+              return mins + ':' + (secs < 10 ? '0' : '') + secs;
             };
 
             return {
@@ -913,7 +912,6 @@ def index():
     </body>
     </html>
     """
-    # Vercel-এর পরিবেশ ভেরিয়েবল থেকে ক্লায়েন্ট মানগুলো ইনজেক্ট করা হচ্ছে
     html_content = html_content.replace("__API_KEY__", os.getenv("NEXT_PUBLIC_FIREBASE_API_KEY", ""))
     html_content = html_content.replace("__AUTH_DOMAIN__", os.getenv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "all-panel-support.firebaseapp.com"))
     html_content = html_content.replace("__PROJECT_ID__", "all-panel-support")
@@ -921,7 +919,8 @@ def index():
     html_content = html_content.replace("__MESSAGING_SENDER_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", ""))
     html_content = html_content.replace("__APP_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_APP_ID", ""))
 
-    return render_template_string(html_content)
+    # ৫. রেন্ডার_টেম্পলেট_স্ট্রিং এর বদলে রিউ রেসপন্স রিটার্ন করে ব্র্যাকেট সংঘর্ষ এড়ানো হলো
+    return Response(html_content, mimetype='text/html')
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 4000))
