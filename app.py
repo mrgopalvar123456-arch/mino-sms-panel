@@ -12,9 +12,8 @@ from firebase_admin import db as fb_db
 app = Flask(__name__)
 
 # =========================================================================
-# ফায়ারবেজ এডমিন SDK ইন্টিগ্রেশন (সার্ভিস অ্যাকাউন্ট কোডের ভেতরে হার্ডকোডেড)
+# ফায়ারবেজ এডমিন কনফিগারেশন 
 # =========================================================================
-# আপনার ফায়ারবেজ রিয়েলটাইম ডাটাবেজের URL (লোকেশন পরিবর্তন করলে শুধু এই URL টি এডিট করবেন):
 FIREBASE_DB_URL = "https://all-panel-support-default-rtdb.firebaseio.com/"
 
 CRED_DICT = {
@@ -31,7 +30,6 @@ CRED_DICT = {
   "universe_domain": "googleapis.com"
 }
 
-# ফায়ারবেজ অ্যাপ ইনিশিয়েলাইজেশন
 if not firebase_admin._apps:
     cred = credentials.Certificate(CRED_DICT)
     firebase_admin.initialize_app(cred, {
@@ -39,20 +37,61 @@ if not firebase_admin._apps:
     })
 
 # =========================================================================
-# ফায়ারবেজ ডাটাবেজ হ্যান্ডলারস
+# ডাটাবেজ হ্যান্ডলারস (এটমিক অপারেশন এবং কান্ট্রি প্রিফিক্স ম্যাপ)
 # =========================================================================
 MEMORY_DB = None
 
-# ফায়ারবেজের ডিকশনারি ডাটাকে পাইথন লিস্টে রূপান্তর করার কনভার্টার
+# কান্ট্রি কোড প্রিফিক্স ম্যাপ (কনসোলে দেশের নাম দেখানোর জন্য)
+COUNTRY_PREFIXES = {
+    "224": "Guinea",
+    "225": "Ivory Coast",
+    "236": "Central African Republic",
+    "221": "Senegal",
+    "223": "Mali",
+    "226": "Burkina Faso",
+    "227": "Niger",
+    "228": "Togo",
+    "229": "Benin",
+    "237": "Cameroon",
+    "241": "Gabon",
+    "242": "Congo",
+    "243": "DR Congo",
+    "235": "Chad",
+    "240": "Equatorial Guinea",
+    "231": "Liberia",
+    "232": "Sierra Leone",
+    "233": "Ghana",
+    "234": "Nigeria",
+    "250": "Rwanda",
+    "254": "Kenya",
+    "255": "Tanzania",
+    "256": "Uganda",
+    "257": "Burundi",
+    "261": "Madagascar",
+    "269": "Comoros"
+}
+
+def get_country_from_range(range_str):
+    if not range_str:
+        return "Unknown"
+    clean_range = "".join(filter(str.isdigit, str(range_str)))
+    for prefix, country in COUNTRY_PREFIXES.items():
+        if clean_range.startswith(prefix):
+            return country
+    return "Guinea"
+
 def firebase_to_list(data):
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        try:
-            sorted_keys = sorted(data.keys(), key=lambda x: int(x))
-            return [data[k] for k in sorted_keys]
-        except ValueError:
-            return list(data.values())
+        lst = []
+        for k, v in data.items():
+            if isinstance(v, dict):
+                v['id'] = k  # ফায়ারবেজের অনন্য কী (Key) কে অবজেক্টের আইডি হিসেবে ট্র্যাক করা হবে
+                lst.append(v)
+            else:
+                lst.append(v)
+        return lst
     return []
 
 def load_db():
@@ -69,7 +108,6 @@ def load_db():
                 "live_console": []
             }
         
-        # নিশ্চিত করা যেন প্রয়োজনীয় ফিল্ডগুলো থাকে
         if "users" not in db_data or not isinstance(db_data["users"], dict): 
             db_data["users"] = {}
             
@@ -91,16 +129,12 @@ def load_db():
         }
 
 def save_db(db_data):
-    global MEMORY_DB
-    MEMORY_DB = db_data
-    try:
-        ref = fb_db.reference('/')
-        ref.set(db_data)
-    except Exception as e:
-        print("Firebase Admin Save Error:", e)
+    # গ্লোবাল রুট ওভাররাইট ঠেকাতে এই ফাংশনটি নিষ্ক্রিয় করা হয়েছে।
+    # ডাটাবেজের সব রাইট অপারেশন এখন পারমাণবিক (Atomic) পাথে সরাসরি সম্পন্ন হয়।
+    pass
 
 # =========================================================================
-# CORS এবং এন্টি-ক্যাশিং পলিসি (মোবাইল অ্যাপ ও ব্রাউজারে ব্লকিং এড়াতে)
+# CORS এবং এন্টি-ক্যাশিং পলিসি
 # =========================================================================
 @app.before_request
 def handle_options_preflight():
@@ -186,7 +220,7 @@ def register():
 
         uid = "usr_" + secrets.token_hex(8)
 
-        db["users"][uid] = {
+        user_data = {
             'uid': uid,
             'name': name,
             'email': email,
@@ -199,8 +233,10 @@ def register():
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
         
-        save_db(db)
-        return jsonify({'status': 'success', 'token': uid, 'user': db["users"][uid]})
+        # ক্লাউডে পারমাণবিক বা এটমিক সেভ (Atomic Write)
+        fb_db.reference(f'/users/{uid}').set(user_data)
+        
+        return jsonify({'status': 'success', 'token': uid, 'user': user_data})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
@@ -234,7 +270,7 @@ def get_me():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# স্থায়ী এপিআই কি জেনারেট করার এপিআই
+# এপিআই কি জেনারেট (পারমাণবিক সেভ)
 @app.route('/api/v1/user/generate-key', methods=['POST'])
 def generate_api_key():
     try:
@@ -246,14 +282,14 @@ def generate_api_key():
         user_id = user['uid']
         if not db["users"][user_id].get('api_key'):
             unique_key = 'mino_live_' + secrets.token_hex(16)
-            db["users"][user_id]['api_key'] = unique_key
-            save_db(db)
+            fb_db.reference(f'/users/{user_id}/api_key').set(unique_key)
             return jsonify({'status': 'success', 'message': 'API Key generated', 'api_key': unique_key})
         else:
             return jsonify({'status': 'success', 'message': 'API Key already exists', 'api_key': db["users"][user_id]['api_key']})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# ওয়ালেট এড্রেস এডিট (পারমাণবিক সেভ)
 @app.route('/api/v1/user/update-wallet', methods=['POST'])
 def update_wallet():
     try:
@@ -266,8 +302,7 @@ def update_wallet():
         wallet_address = data.get('wallet_address', '').strip()
         
         user_id = user['uid']
-        db["users"][user_id]['wallet_address'] = wallet_address
-        save_db(db)
+        fb_db.reference(f'/users/{user_id}/wallet_address').set(wallet_address)
         
         return jsonify({'status': 'success', 'message': 'Wallet updated successfully', 'wallet_address': wallet_address})
     except Exception as e:
@@ -355,7 +390,9 @@ def getnum():
         country = data_payload.get('country', 'Guinea')
         operator = data_payload.get('operator', 'Mobile')
 
-        db["allocated_numbers"].append({
+        alloc_id = "alloc_" + secrets.token_hex(8)
+        allocation_data = {
+            'id': alloc_id,
             'userId': user_id,
             'number': number,
             'rid': rid,
@@ -363,16 +400,18 @@ def getnum():
             'country': country,
             'operator': operator,
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
-        })
+        }
 
-        db["live_console"].append({
+        # এটমিক পুশ (নির্দিষ্ট পাথে ডাটা আপডেট হবে)
+        fb_db.reference(f'/allocated_numbers/{alloc_id}').set(allocation_data)
+
+        console_id = "con_" + secrets.token_hex(8)
+        fb_db.reference(f'/live_console/{console_id}').set({
             'type': 'allocation',
             'message': f"Number {mask_number(number)} requested on range {rid}",
             'service': operator,
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
-        
-        save_db(db)
 
         return jsonify({
             'status': 'success',
@@ -439,8 +478,13 @@ def get_user_allocations():
                                         break
                                 
                                 if not already_logged:
-                                    user['balance'] = float(user.get('balance', 0.0)) + otp_rate
-                                    db["otp_logs"].append({
+                                    new_balance = float(user.get('balance', 0.0)) + otp_rate
+                                    # ১. ইউজারের ব্যালেন্স ক্লাউডে আপডেট করুন
+                                    fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
+                                    
+                                    # ২. ওটিপি লগ ক্লাউডে পুশ করুন
+                                    otp_id = "otp_" + secrets.token_hex(8)
+                                    fb_db.reference(f'/otp_logs/{otp_id}').set({
                                         'userId': user_id,
                                         'number': alloc['number'],
                                         'service': service,
@@ -450,11 +494,18 @@ def get_user_allocations():
                                         'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     })
 
-                                alloc['status'] = 'completed'
-                                alloc['otp'] = otp_code
-                                alloc['message'] = message
+                                # ৩. এলোকেশনের স্ট্যাটাস ক্লাউডে আপডেট করুন
+                                alloc_id = alloc.get('id')
+                                if alloc_id:
+                                    fb_db.reference(f'/allocated_numbers/{alloc_id}').update({
+                                        'status': 'completed',
+                                        'otp': otp_code,
+                                        'message': message
+                                    })
 
-                                db["live_console"].append({
+                                # ৪. লাইভ কনসোল ক্লাউডে পুশ করুন
+                                console_id = "con_" + secrets.token_hex(8)
+                                fb_db.reference(f'/live_console/{console_id}').set({
                                     'type': 'otp_success',
                                     'message': f"HIT! {service.upper()} OTP Received on {mask_number(alloc['number'])}!",
                                     'service': service,
@@ -475,11 +526,16 @@ def get_user_allocations():
                     elapsed_seconds = (now - created_at).total_seconds()
                     if elapsed_seconds > (18 * 60):
                         alloc['status'] = 'expired'
+                        alloc_id = alloc.get('id')
+                        if alloc_id:
+                            fb_db.reference(f'/allocated_numbers/{alloc_id}/status').set('expired')
 
-        save_db(db)
-        user_allocs.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        # মেমোরিতে থাকা এলোকেশন পুনরায় লোড করুন
+        refreshed_db = load_db()
+        refreshed_allocs = [a for a in refreshed_db["allocated_numbers"] if a['userId'] == user_id]
+        refreshed_allocs.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
 
-        return jsonify({'status': 'success', 'allocations': user_allocs})
+        return jsonify({'status': 'success', 'allocations': refreshed_allocs})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -494,11 +550,15 @@ def get_live_console():
                 hits = stex_data.get('data', {}).get('hits', [])
                 data = []
                 for hit in hits[:15]:
+                    r = hit.get('range', 'N/A')
+                    # ক্লাউড অথবা প্রিফিক্স ম্যাপ থেকে কান্ট্রি নির্ধারণ
+                    c_name = hit.get('country') or hit.get('country_name') or get_country_from_range(r)
                     data.append({
-                        'range': hit.get('range', 'N/A'),
+                        'range': r,
                         'service': hit.get('sid', 'Global'),
                         'message': hit.get('message', ''),
-                        'time': hit.get('time', 0)
+                        'time': hit.get('time', 0),
+                        'country': c_name
                     })
                 return jsonify({'status': 'success', 'data': data})
     except Exception as e:
@@ -866,7 +926,7 @@ def index():
                         {{ log.service }}
                       </span>
                       <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-                        Range: {{ log.range }} (Click to Copy)
+                        {{ log.country }} (Click to Copy)
                       </span>
                     </div>
                     <div class="space-y-1">
