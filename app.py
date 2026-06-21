@@ -34,8 +34,35 @@ if raw_private_key:
     # Vercel/Render-এর environment variable-এর \n কে আসল নিউলাইনে রূপান্তর করার জন্য
     private_key = raw_private_key.replace("\\n", "\n")
 else:
-    # ব্যাকআপ হার্ডকোডেড প্রাইভেট কী (প্রয়োজনে এটি ফায়ারবেস থেকে নতুন জেনারেট করে পুরোটা আপডেট করে নিবেন)
-    private_key = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ\nfqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy\nB6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh\ns+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q\ndzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5\nov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk\nXZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz\nC1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV\n8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00\ NouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a\nFpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO\n5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU\nOXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG\n3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ\n3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy\ssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj\n682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG\n3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl\nmJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b\nKEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV\nkK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA\nVKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL\nx4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ\nW9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl\n5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N\n3QfQiRb/u6F6f+gzT+v6JBU=\n-----END PRIVATE KEY-----\n"
+    # ব্যাকআপ হার্ডকোডেড প্রাইভেট কী (ট্রিপল কোটেশন ব্যবহার করে আসল নিউলাইনে ডিফাইন করা হলো, যাতে ব্যাকস্ল্যাশ সংক্রান্ত বাগ না আসে)
+    private_key = """-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ
+fqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy
+B6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh
+s+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q
+dzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5
+ov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk
+XZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz
+C1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV
+8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00
+NouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a
+FpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO
+5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU
+OXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG
+3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ
+3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy
+ssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj
+682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG
+3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl
+mJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b
+KEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV
+kK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA
+VKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL
+x4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ
+W9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl
+5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N
+3QfQiRb/u6F6f+gzT+v6JBU=
+-----END PRIVATE KEY-----"""
 
 # ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
 firebase_creds = {
