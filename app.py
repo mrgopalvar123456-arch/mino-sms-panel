@@ -28,13 +28,14 @@ FIREBASE_CLIENT_CONFIG = {
     "appId": "এখানে_আপনার_Firebase_App_ID_দিন"                 # উদাহরণ: "1:112981..."
 }
 
-# ১. সরাসরি আপনার ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
+# ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
+# (নিরাপত্তার সুবিধার্থে এগুলো এনভায়রনমেন্ট ভেরিয়েবল থেকে নেওয়ার চেষ্টা করবে, না পেলে হার্ডকোড করা মান ব্যবহার করবে)
 firebase_creds = {
   "type": "service_account",
   "project_id": "all-panel-support",
-  "private_key_id": "f482e69eaee23c8be49b2394631ac36dd9201617",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ\nfqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy\nB6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh\ns+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q\ndzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5\nov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk\nXZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz\nC1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV\n8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00\nNouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a\nFpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO\n5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU\nOXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG\n3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ\n3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy\nssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj\n682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG\n3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl\nmJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b\nKEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV\nkK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA\nVKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL\nx4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ\nW9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl\n5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N\n3QfQiRb/u6F6f+gzT+v6JBU=\n-----END PRIVATE KEY-----\n",
-  "client_email": "firebase-adminsdk-fbsvc@all-panel-support.iam.gserviceaccount.com",
+  "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", "f482e69eaee23c8be49b2394631ac36dd9201617"),
+  "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ\nfqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy\nB6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh\ns+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q\ndzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5\nov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk\nXZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz\nC1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV\n8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00\nNouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a\nFpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO\n5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU\nOXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG\n3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ\n3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy\nssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj\n682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG\n3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl\nmJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b\nKEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV\nkK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA\nVKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL\nx4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ\nW9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl\n5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N\n3QfQiRb/u6F6f+gzT+v6JBU=\n-----END PRIVATE KEY-----\n"),
+  "client_email": os.getenv("FIREBASE_CLIENT_EMAIL", "firebase-adminsdk-fbsvc@all-panel-support.iam.gserviceaccount.com"),
   "client_id": "112981434071027857034",
   "auth_uri": "https://accounts.google.com/o/oauth2/auth",
   "token_uri": "https://oauth2.googleapis.com/token",
@@ -328,6 +329,12 @@ def index():
     <body class="text-slate-700 font-sans">
       <div id="app" v-cloak>
         
+        <!-- এনভায়রনমেন্ট ভেরিয়েবল বা ফায়ারবেস কনফিগারেশন এরর ব্যানার -->
+        <div v-if="initError" class="bg-rose-600 text-white px-4 py-3 text-center text-sm font-bold shadow-md flex items-center justify-center gap-2">
+          <i class="fa-solid fa-circle-exclamation text-lg animate-bounce"></i>
+          <span>সার্ভার সতর্কবার্তা: {{ initError }}</span>
+        </div>
+
         <!-- লগইন / সাইনআপ উইন্ডো -->
         <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
           <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
@@ -347,7 +354,7 @@ def index():
                 <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
 
-              <button type="submit" :disabled="authLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
+              <button type="submit" :disabled="authLoading || initError" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
                 {{ authLoading ? 'Please wait...' : (isRegistering ? 'REGISTER' : 'LOG IN') }}
               </button>
             </form>
@@ -773,12 +780,26 @@ def index():
           appId: "__APP_ID__"
         };
 
-        firebase.initializeApp(firebaseConfig);
-        const auth = firebase.auth();
-        const db = firebase.firestore();
+        let auth = null;
+        let db = null;
+        let initErrorMsg = "";
+
+        // ব্রাউজার সাইড ফায়ারবেস ইন্টিগ্রেশন সেফ-চেক
+        try {
+          if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("__API_KEY__") || firebaseConfig.apiKey === "") {
+            throw new Error("ফায়ারবেস API Key অনুপস্থিত। আপনার ক্লাউড হোস্টিংয়ে environment variables যুক্ত করুন।");
+          }
+          firebase.initializeApp(firebaseConfig);
+          auth = firebase.auth();
+          db = firebase.firestore();
+        } catch (err) {
+          console.error("Firebase Initialization Failed:", err);
+          initErrorMsg = err.message || "ফায়ারবেস লোড করতে সমস্যা হয়েছে।";
+        }
 
         createApp({
           setup() {
+            const initError = ref(initErrorMsg);
             const user = ref(null);
             const profile = ref(null);
             const authEmail = ref('');
@@ -801,33 +822,35 @@ def index():
             onMounted(() => {
               windowOrigin.value = window.location.origin; 
 
-              auth.onAuthStateChanged(currentUser => {
-                if (currentUser) {
-                  user.value = currentUser;
+              if (auth && db) {
+                auth.onAuthStateChanged(currentUser => {
+                  if (currentUser) {
+                    user.value = currentUser;
 
-                  db.collection('profiles').doc(currentUser.uid).onSnapshot(docSnap => {
-                    if (docSnap.exists) {
-                      profile.value = docSnap.data();
-                    }
-                  });
+                    db.collection('profiles').doc(currentUser.uid).onSnapshot(docSnap => {
+                      if (docSnap.exists) {
+                        profile.value = docSnap.data();
+                      }
+                    });
 
-                  db.collection('live_console').orderBy('createdAt', 'desc').limit(10).onSnapshot(snap => {
-                    const logs = [];
-                    snap.forEach(doc => logs.push({ id: doc.id, ...doc.data() }));
-                    liveLogs.value = logs;
-                  });
+                    db.collection('live_console').orderBy('createdAt', 'desc').limit(10).onSnapshot(snap => {
+                      const logs = [];
+                      snap.forEach(doc => logs.push({ id: doc.id, ...doc.data() }));
+                      liveLogs.value = logs;
+                    });
 
-                  db.collection('otp_logs').where('userId', '==', currentUser.uid).orderBy('createdAt', 'desc').limit(15).onSnapshot(snap => {
-                    const otps = [];
-                    snap.forEach(doc => otps.push({ id: doc.id, ...doc.data() }));
-                    successOtps.value = otps;
-                  });
+                    db.collection('otp_logs').where('userId', '==', currentUser.uid).orderBy('createdAt', 'desc').limit(15).onSnapshot(snap => {
+                      const otps = [];
+                      snap.forEach(doc => otps.push({ id: doc.id, ...doc.data() }));
+                      successOtps.value = otps;
+                    });
 
-                } else {
-                  user.value = null;
-                  profile.value = null;
-                }
-              });
+                  } else {
+                    user.value = null;
+                    profile.value = null;
+                  }
+                });
+              }
             });
 
             watch(activeNumber, (newVal) => {
@@ -845,6 +868,10 @@ def index():
             });
 
             const handleAuth = async () => {
+              if (!auth) {
+                alert("ফায়ারবেস সঠিকভাবে কনফিগার করা হয়নি।");
+                return;
+              }
               if (!authEmail.value || !authPassword.value) return;
               authLoading.value = true;
               try {
@@ -871,7 +898,9 @@ def index():
             };
 
             const signOut = () => {
-              auth.signOut();
+              if (auth) {
+                auth.signOut();
+              }
               activeNumber.value = null;
               otpResult.value = null;
             };
@@ -916,7 +945,7 @@ def index():
             };
 
             return {
-              user, profile, authEmail, authPassword, isRegistering, authLoading,
+              initError, user, profile, authEmail, authPassword, isRegistering, authLoading,
               currentTab, rid, activeNumber, otpResult, loadingNumber, liveLogs, successOtps, timeLeft,
               windowOrigin, handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, window
             };
