@@ -318,7 +318,7 @@ def index():
       <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
       
-      <!-- Firebase Compat SDKs (ভার্সন ৯.২৩.০ অনুযায়ী লাইব্রেরি লোড করা হয়েছে) -->
+      <!-- Firebase Compat SDKs -->
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
       <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -356,7 +356,8 @@ def index():
                 <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
 
-              <button type="submit" :disabled="authLoading || initError" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
+              <!-- বাটন ডিজেবল লজিককে বুলিয়ান কাস্ট করা হয়েছে -->
+              <button type="submit" :disabled="authLoading || !!initError" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
                 {{ authLoading ? 'Please wait...' : (isRegistering ? 'REGISTER' : 'LOG IN') }}
               </button>
             </form>
@@ -773,7 +774,6 @@ def index():
       <script>
         const { createApp, ref, onMounted, watch } = Vue;
 
-        // আপনার দেওয়া নতুন Firebase Web SDK কনফিগারেশন (measurementId সহ)
         const firebaseConfig = {
           apiKey: "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE",
           authDomain: "all-panel-support.firebaseapp.com",
@@ -787,14 +787,14 @@ def index():
         let auth = null;
         let db = null;
         let analytics = null;
-        let initErrorMsg = "";
+        
+        // খালি স্ট্রিং এর বদলে ডিফল্ট মান false করা হয়েছে
+        let initErrorMsg = false;
 
-        // ফায়ারবেস লোড করার ট্রাই-ক্যাচ ব্লক
         try {
           if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("__API_KEY__") || firebaseConfig.apiKey === "") {
             throw new Error("ফায়ারবেস API Key অনুপস্থিত। আপনার ক্লাউড হোস্টিংয়ে environment variables যুক্ত করুন।");
           }
-          // Compat SDK দিয়ে ফায়ারবেস ইনিশিয়ালাইজেশন
           firebase.initializeApp(firebaseConfig);
           auth = firebase.auth();
           db = firebase.firestore();
