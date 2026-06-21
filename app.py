@@ -3,8 +3,6 @@ import secrets
 import datetime
 import requests
 from flask import Flask, request, jsonify, Response
-import firebase_admin
-from firebase_admin import credentials, firestore, auth
 
 app = Flask(__name__)
 
@@ -12,78 +10,17 @@ app = Flask(__name__)
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,X-MINO-API-KEY')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,X-MINO-API-KEY,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
 # =========================================================================
-# ফায়ারবেস ক্লায়েন্ট কনফিগারেশন (সঠিক মানগুলো বসানো হয়েছে)
+# ইন-মেমোরি ডাটাবেজ (ফায়ারবেস সম্পূর্ণ রিমুভড)
 # =========================================================================
-FIREBASE_CLIENT_CONFIG = {
-    "apiKey": "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE",           
-    "authDomain": "all-panel-support.firebaseapp.com",
-    "projectId": "all-panel-support",
-    "storageBucket": "all-panel-support.firebasestorage.app",
-    "messagingSenderId": "189478800502", 
-    "appId": "1:189478800502:web:e57ff2fefaa3d082b8a357"                 
-}
-
-# পরিবেশ ভেরিয়েবল থেকে প্রাইভেট কি রিড করা এবং Newline (\n) রি-ফরম্যাট করা
-raw_private_key = os.getenv("FIREBASE_PRIVATE_KEY")
-if raw_private_key:
-    # Vercel/Render-এর environment variable-এর \n কে আসল নিউলাইনে রূপান্তর করার জন্য
-    private_key = raw_private_key.replace("\\n", "\n")
-else:
-    # ব্যাকআপ হার্ডকোডেড প্রাইভেট কী (আসল নিউলাইনে ডিফাইন করা হলো, যাতে ব্যাকস্ল্যাশ সংক্রান্ত বাগ না আসে)
-    private_key = """-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDLp7LfbvuJaHBJ
-fqr54VUXwa35OYJq+7MnrjexU2+Cye3figOn/GgSGEKbSruDP2BD/isarRdNSShy
-B6eKphcn5/iQIfdWJx9oDdbK+VQrF7HfmvN3JVdoKLIOUCLlcLGGO2RuFuLFMhhh
-s+Iu8kX7TBFafVwP796+qrTNc4r4LqbbjB3lgfiMvWd5jUhbuWGJ8N8wd1mM/S9q
-dzTSx/w6yPAsKwRWySUHCI0o1S6E1RiFPLJDeLpp5wrzqn5IfzbqjAs9eh4HNAP5
-ov4F5fhhXVp5b0xmNXcn7CfnIkX86VRC1mri4MO2LKV6Ld+A7rC1LG/fSDv1dDNk
-XZ7//821AgMBAAECggEAALQeMwA/aA4KEJrv13KpmFjVM3P5KR+gUr4Fl7woebdz
-C1oUS/zcKtnWGxK9m0UOswAaYS/MEY/ejvxLSM2XmA3zXCNzPGM2DCY7bH1C3EOV
-8VDn+pdQr2halcroP/TXzCqsMhGBVuSRfymVBGFWZWPxzbylTYcgNMuYBHtbys00
-NouHuM3+Ok1A4xa0XBaNMW3QKXFoPpoxCYEvZf6ZQoJwj3SyNBbXyVuNDSAExy6a
-FpfUZaWWdkzueeu4W/RelWbLiicGo0NQQJpVT4WtYj9Y5aTDxuD+GNBuANLK6pUO
-5ZDCiiIEXxyWodOiB40n1DECL4o3txppd7ZERAodWQKBgQDvKeq07AFAEfJ56JxU
-OXlPK4GhKR7kzlYDwDFl3ges5qCsg8PaamlfSCe+ezDmLNFrcwzhW/D32BXU67WG
-3KSkWGt3xS+TKxCCzHDnsOiIRzHuWM3vWkcSxcPiiEOD+zUzJP6OGAvJQpSgUpAQ
-3llXXG4+v+m3xSN/ZOez+6Zt2QKBgQDZ/d0IfXPertMBh/sX++iBMgyVdZnSfAQy
-ssiylKYEZPxfSeQ0P2zSPSFbn4YNgtUbj5ghZW1xehly4HHGsxwDbKuGbrNdlvDj
-682mj2vIkTFiJnpB17Xi8/twhUK9D2UByhdv/k6dBtAu5YzSSi7IaxyNZ6b3h7QG
-3e99L3MJPQKBgQCXF3kiwXJswqnYIH8aqpCb1pV3dh4BWOV4SyQqAeIBdlYNhtTl
-mJJnUpNhQDx9PdUzt6RsfwQ137qzIBI3WA9fkEiciuNqaytsJrIxfU76QVgnBs1b
-KEJ8dpow8/sLV1mdrQJwTHqttDVnL6G6Nm5kxY0UcXO62H17jwjeaN4UyQKBgHAV
-kK3J22b3GvVhlqCZXM35DvFWO1Y3f+0Vcg4oUkhWKFFSa+zVY72hwuIaXtHZoHuA
-VKdvQFulfSpM7xNMiq3UFUmU59LKRmfama33dmL1DKA7yobKQ/JCotkTG+Kb5MKL
-x4tFBeTFWQuT6dlCXVWdhVvLnNUPSGhzeq0yVYK9AoGALaS7t6q/m39+sCigyDvZ
-W9L36TO/xtt02XrO3MwOQordHf3ovstohZRcAepf3kChYqJtoS+jTjXmdPWt38tl
-5gLDnsBJjl/vcW+2xhtPLFmIzoMtT/yTja6oI85MlsWXNX58F6Mk97OXM/i5HK8N
-3QfQiRb/u6F6f+gzT+v6JBU=
------END PRIVATE KEY-----"""
-
-# ফায়ারবেস অ্যাডমিন ক্রেডেনশিয়াল জেসন
-firebase_creds = {
-  "type": "service_account",
-  "project_id": "all-panel-support",
-  "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID", "f482e69eaee23c8be49b2394631ac36dd9201617"),
-  "private_key": private_key,
-  "client_email": os.getenv("FIREBASE_CLIENT_EMAIL", "firebase-adminsdk-fbsvc@all-panel-support.iam.gserviceaccount.com"),
-  "client_id": "112981434071027857034",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40all-panel-support.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
-
-if not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_creds)
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client()
+users = {}            # { uid: {email, password, api_key, balance, otp_rate, id_code, createdAt} }
+allocated_numbers = [] # [ {userId, number, rid, status, createdAt} ]
+otp_logs = []          # [ {userId, number, service, otpCode, message, revenue, createdAt} ]
+live_console = []      # [ {type, message, service, createdAt} ]
 
 STEX_API_KEY = "MWF1Z0QG1DJ"
 STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX8U/tness/gpubliic/api"
@@ -97,8 +34,16 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
+# টোকেন ব্যবহার করে রিকোয়েস্ট থেকে ইউজার খুঁজে বের করার ফাংশন
+def get_current_user():
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+    token = auth_header.split(' ')[1]
+    return users.get(token)
+
 # =========================================================================
-# এপিআই ০: সিকিউর রেজিস্ট্রেশন (সার্ভার-সাইড)
+# এপিআই ০: সিকিউর রেজিস্ট্রেশন (ইন-মেমোরি)
 # =========================================================================
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
@@ -110,22 +55,59 @@ def register():
         if not email or not password:
             return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
 
-        user_record = auth.create_user(email=email, password=password)
+        # চেক করা হচ্ছে মেইলটি আগে ব্যবহার করা হয়েছে কি না
+        for u in users.values():
+            if u['email'] == email:
+                return jsonify({'status': 'error', 'message': 'Email already registered'}), 400
+
+        uid = "usr_" + secrets.token_hex(8)
         unique_key = 'mino_live_' + secrets.token_hex(16)
 
-        # প্রোফাইল তৈরি (ব্যালেন্স ডিফল্ট ০.০০, ওটিপি রেট ০.৫০)
-        db.collection('profiles').document(user_record.uid).set({
+        users[uid] = {
+            'uid': uid,
             'email': email,
+            'password': password,
             'api_key': unique_key,
             'balance': 0.00,
             'otp_rate': 0.50,
             'id_code': f"MINO-{secrets.randbelow(9000) + 1000}",
-            'createdAt': firestore.SERVER_TIMESTAMP
-        })
+            'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
 
-        return jsonify({'status': 'success'})
+        return jsonify({'status': 'success', 'token': uid, 'user': users[uid]})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
+
+# =========================================================================
+# এপিআই ০.১: লগইন (ইন-মেমোরি)
+# =========================================================================
+@app.route('/api/v1/auth/login', methods=['POST'])
+def login():
+    try:
+        data = request.json or {}
+        email = data.get('email')
+        password = data.get('password')
+
+        if not email or not password:
+            return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
+
+        for uid, u in users.items():
+            if u['email'] == email and u['password'] == password:
+                return jsonify({'status': 'success', 'token': uid, 'user': u})
+
+        return jsonify({'status': 'error', 'message': 'Invalid email or password'}), 401
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# =========================================================================
+# এপিআই ০.২: কারেন্ট ইউজার ডিটেইলস
+# =========================================================================
+@app.route('/api/v1/auth/me', methods=['GET'])
+def get_me():
+    u = get_current_user()
+    if not u:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    return jsonify({'status': 'success', 'user': u})
 
 # =========================================================================
 # এপিআই ১: গেট নাম্বার
@@ -139,12 +121,17 @@ def getnum():
         if not api_key or not rid:
             return jsonify({'status': 'error', 'message': 'API Key or RID missing'}), 400
 
-        users_ref = db.collection('profiles').where('api_key', '==', api_key).limit(1).stream()
-        user_doc = next(users_ref, None)
-        if not user_doc:
+        # এপিআই কী দিয়ে ইউজার খোঁজা
+        user = None
+        for u in users.values():
+            if u['api_key'] == api_key:
+                user = u
+                break
+
+        if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
 
-        user_id = user_doc.id
+        user_id = user['uid']
 
         stex_response = requests.post(
             f"{STEX_BASE_URL}/getnum",
@@ -162,19 +149,19 @@ def getnum():
 
         number = stex_data['data']['full_number']
 
-        db.collection('allocated_numbers').add({
+        allocated_numbers.append({
             'userId': user_id,
             'number': number,
             'rid': rid,
             'status': 'active',
-            'createdAt': firestore.SERVER_TIMESTAMP
+            'createdAt': datetime.datetime.now(datetime.timezone.utc)
         })
 
-        db.collection('live_console').add({
+        live_console.append({
             'type': 'allocation',
             'message': f"Number {mask_number(number)} requested on range {rid}",
             'service': stex_data['data'].get('operator', 'STEX Gateway'),
-            'createdAt': firestore.SERVER_TIMESTAMP
+            'createdAt': datetime.datetime.now(datetime.timezone.utc)
         })
 
         return jsonify({
@@ -199,41 +186,49 @@ def get_otp():
         if not api_key or not number:
             return jsonify({'status': 'error', 'message': 'API Key and Number are required'}), 400
 
-        users_ref = db.collection('profiles').where('api_key', '==', api_key).limit(1).stream()
-        user_doc = next(users_ref, None)
-        if not user_doc:
+        user = None
+        for u in users.values():
+            if u['api_key'] == api_key:
+                user = u
+                break
+
+        if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
 
-        user_id = user_doc.id
-        user_data = user_doc.to_dict()
-        otp_rate = float(user_data.get('otp_rate', 0.50))
+        user_id = user['uid']
+        otp_rate = float(user.get('otp_rate', 0.50))
 
-        num_ref = db.collection('allocated_numbers').where('number', '==', number).where('userId', '==', user_id).limit(1).stream()
-        num_doc = next(num_ref, None)
-        if not num_doc:
+        # বরাদ্দকৃত নম্বর রেকর্ড খোঁজা হচ্ছে
+        alloc = None
+        for item in allocated_numbers:
+            if item['number'] == number and item['userId'] == user_id:
+                alloc = item
+                break
+
+        if not alloc:
             return jsonify({'status': 'error', 'message': 'Number record not found'}), 404
 
-        num_data = num_doc.to_dict()
-
-        created_at = num_data.get('createdAt')
+        created_at = alloc.get('createdAt')
         diff_seconds = 0
         is_expired = False
         if created_at:
             now = datetime.datetime.now(datetime.timezone.utc)
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=datetime.timezone.utc)
             diff = now - created_at
             diff_seconds = diff.total_seconds()
             is_expired = diff_seconds > (18 * 60)
 
-        if is_expired or num_data.get('status') == 'expired':
-            db.collection('allocated_numbers').document(num_doc.id).update({'status': 'expired'})
+        if is_expired or alloc.get('status') == 'expired':
+            alloc['status'] = 'expired'
             return jsonify({'status': 'expired', 'message': 'Number expired (18 mins over)'})
 
-        otp_ref = db.collection('otp_logs').where('number', '==', number).where('userId', '==', user_id).limit(1).stream()
-        otp_doc = next(otp_ref, None)
-        if otp_doc:
-            existing_otp = otp_doc.to_dict()
+        # অলরেডি ওটিপি এসে থাকলে তা চেক করা হচ্ছে
+        existing_otp = None
+        for log in otp_logs:
+            if log['number'] == number and log['userId'] == user_id:
+                existing_otp = log
+                break
+
+        if existing_otp:
             return jsonify({
                 'status': 'success',
                 'otp': existing_otp.get('otpCode'),
@@ -256,19 +251,10 @@ def get_otp():
                     service = 'instagram'
 
                 if service:
-                    # ব্যালেন্স ট্রানজেকশন আপডেট
-                    user_ref = db.collection('profiles').document(user_id)
-                    
-                    @firestore.transactional
-                    def update_balance_transaction(transaction, ref_obj):
-                        snapshot = ref_obj.get(transaction=transaction)
-                        current_balance = float(snapshot.get('balance') or 0.0)
-                        transaction.update(ref_obj, {'balance': current_balance + otp_rate})
+                    # ব্যালেন্স আপডেট
+                    user['balance'] = float(user.get('balance', 0.0)) + otp_rate
 
-                    transaction = db.transaction()
-                    update_balance_transaction(transaction, user_ref)
-
-                    db.collection('otp_logs').add({
+                    otp_logs.append({
                         'userId': user_id,
                         'number': number,
                         'service': service,
@@ -276,16 +262,16 @@ def get_otp():
                         'message': otp_data.get('message'),
                         'revenue': otp_rate,
                         'stexTime': otp_data.get('time'),
-                        'createdAt': firestore.SERVER_TIMESTAMP
+                        'createdAt': datetime.datetime.now(datetime.timezone.utc)
                     })
 
-                    db.collection('allocated_numbers').document(num_doc.id).update({'status': 'completed'})
+                    alloc['status'] = 'completed'
 
-                    db.collection('live_console').add({
+                    live_console.append({
                         'type': 'otp_success',
                         'message': f"HIT! {service.upper()} OTP Received on {mask_number(number)}!",
                         'service': service,
-                        'createdAt': firestore.SERVER_TIMESTAMP
+                        'createdAt': datetime.datetime.now(datetime.timezone.utc)
                     })
 
                     return jsonify({
@@ -311,19 +297,21 @@ def success_otp():
         if not api_key:
             return jsonify({'status': 'error', 'message': 'API Key is required'}), 401
 
-        users_ref = db.collection('profiles').where('api_key', '==', api_key).limit(1).stream()
-        user_doc = next(users_ref, None)
-        if not user_doc:
+        user = None
+        for u in users.values():
+            if u['api_key'] == api_key:
+                user = u
+                break
+
+        if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
 
-        otp_ref = db.collection('otp_logs')\
-            .where('userId', '==', user_doc.id)\
-            .order_by('createdAt', direction=firestore.Query.DESCENDING)\
-            .limit(15).stream()
+        # ওটিপি রিভার্স সর্ট
+        user_logs = [log for log in otp_logs if log['userId'] == user['uid']]
+        user_logs.sort(key=lambda x: x['createdAt'], reverse=True)
 
         data = []
-        for doc in otp_ref:
-            d = doc.to_dict()
+        for d in user_logs[:15]:
             created_at = d.get('createdAt')
             data.append({
                 'number': d.get('number'),
@@ -331,12 +319,30 @@ def success_otp():
                 'otp_code': d.get('otpCode'),
                 'message': d.get('message'),
                 'revenue_earned': d.get('revenue'),
-                'created_at': created_at.isoformat() if created_at else None
+                'created_at': created_at.isoformat() if isinstance(created_at, datetime.datetime) else created_at
             })
 
         return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# =========================================================================
+# এপিআই ৪: গ্লোবাল কনসোল ডাটা রিড (পোলিংয়ের জন্য)
+# =========================================================================
+@app.route('/api/v1/live-console', methods=['GET'])
+def get_live_console():
+    # সর্বশেষ ১০ টি লগ পাঠানো হচ্ছে
+    logs_desc = sorted(live_console, key=lambda x: x['createdAt'], reverse=True)[:10]
+    data = []
+    for log in logs_desc:
+        created_at = log['createdAt']
+        data.append({
+            'type': log['type'],
+            'message': log['message'],
+            'service': log['service'],
+            'createdAt': created_at.isoformat() if isinstance(created_at, datetime.datetime) else created_at
+        })
+    return jsonify({'status': 'success', 'data': data})
 
 # =========================================================================
 # ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page)
@@ -353,9 +359,6 @@ def index():
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
       <style>
         [v-cloak] { display: none; }
         body { background-color: #F3F7FA; }
@@ -373,15 +376,6 @@ def index():
               <p class="text-xs font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register account' : 'Sign in to network' }}</p>
             </div>
 
-            <!-- ক্লায়েন্ট-সাইড এরর সতর্কবার্তা কার্ডের ভেতরেই দেখানোর ব্যবস্থা -->
-            <div v-if="initError" class="bg-rose-50 border border-rose-200 text-rose-600 px-4 py-3 rounded-xl text-xs font-semibold flex items-start gap-2">
-              <i class="fa-solid fa-circle-exclamation text-base mt-0.5 animate-pulse"></i>
-              <div>
-                <p class="font-bold">সিস্টেম সতর্কবার্তা:</p>
-                <p class="mt-1 leading-relaxed">{{ initError }}</p>
-              </div>
-            </div>
-
             <form @submit.prevent="handleAuth" class="space-y-4">
               <div>
                 <label class="text-xs font-bold text-slate-500">Email</label>
@@ -392,7 +386,6 @@ def index():
                 <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
 
-              <!-- বাটনটি আর কখনো লক (Disabled) হয়ে থাকবে না -->
               <button type="submit" :disabled="authLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
                 {{ authLoading ? 'Please wait...' : (isRegistering ? 'REGISTER' : 'LOG IN') }}
               </button>
@@ -544,20 +537,6 @@ def index():
                     </div>
                   </div>
 
-                </div>
-              </div>
-
-              <!-- 7 Days OTP report -->
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-                <h3 class="font-bold text-sm text-slate-800 mb-4">ওটিপি রিপোর্ট (গত ৭ দিন)</h3>
-                <div class="h-32 flex items-end justify-between px-6 pt-4 border-b border-slate-100">
-                  <div class="w-12 bg-[#0088CC] rounded-t-lg h-12"></div>
-                  <div class="w-12 bg-slate-100 rounded-t-lg h-4"></div>
-                  <div class="w-12 bg-[#0088CC] rounded-t-lg h-20"></div>
-                  <div class="w-12 bg-slate-100 rounded-t-lg h-2"></div>
-                  <div class="w-12 bg-slate-100 rounded-t-lg h-6"></div>
-                  <div class="w-12 bg-[#0088CC] rounded-t-lg h-16"></div>
-                  <div class="w-12 bg-[#0088CC] rounded-t-lg h-8"></div>
                 </div>
               </div>
 
@@ -810,35 +789,8 @@ def index():
       <script>
         const { createApp, ref, onMounted, watch } = Vue;
 
-        const firebaseConfig = {
-          apiKey: "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE",
-          authDomain: "all-panel-support.firebaseapp.com",
-          projectId: "all-panel-support", 
-          storageBucket: "all-panel-support.firebasestorage.app",
-          messagingSenderId: "189478800502",
-          appId: "1:189478800502:web:e57ff2fefaa3d082b8a357"
-        };
-
-        let auth = null;
-        let db = null;
-        let initErrorMsg = "";
-
-        // ব্রাউজার সাইড ফায়ারবেস ইন্টিগ্রেশন সেফ-চেক
-        try {
-          if (!firebaseConfig.apiKey || firebaseConfig.apiKey.includes("__API_KEY__") || firebaseConfig.apiKey === "") {
-            throw new Error("ফায়ারবেস API Key অনুপস্থিত। আপনার ক্লাউড হোস্টিংয়ে environment variables যুক্ত করুন।");
-          }
-          firebase.initializeApp(firebaseConfig);
-          auth = firebase.auth();
-          db = firebase.firestore();
-        } catch (err) {
-          console.error("Firebase Initialization Failed:", err);
-          initErrorMsg = err.message || "ফায়ারবেস লোড করতে সমস্যা হয়েছে।";
-        }
-
         createApp({
           setup() {
-            const initError = ref(initErrorMsg);
             const user = ref(null);
             const profile = ref(null);
             const authEmail = ref('');
@@ -857,38 +809,67 @@ def index():
             const timeLeft = ref(1080);
             const windowOrigin = ref(''); 
             let timer = null;
+            let pollingTimer = null;
+
+            // ডাটা পোলিং শুরু করার মেথড (ফায়ারবেস স্ন্যাপশটের বিকল্প)
+            const startPolling = () => {
+              stopPolling();
+              fetchData();
+              pollingTimer = setInterval(fetchData, 4000); // প্রতি ৪ সেকেন্ড পর ডাটা আপডেট হবে
+            };
+
+            const stopPolling = () => {
+              if (pollingTimer) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+              }
+            };
+
+            const fetchData = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) return;
+
+              // ১. ইউজার প্রোফাইল ডাটা ফেচ
+              try {
+                const profileRes = await fetch('/api/v1/auth/me', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const profileData = await profileRes.json();
+                if (profileData.status === 'success') {
+                  user.value = profileData.user;
+                  profile.value = profileData.user;
+                } else {
+                  signOut();
+                  return;
+                }
+              } catch (e) {}
+
+              // ২. গ্লোবাল লাইভ কনসোল ডাটা ফেচ
+              try {
+                const consoleRes = await fetch('/api/v1/live-console');
+                const consoleData = await consoleRes.json();
+                if (consoleData.status === 'success') {
+                  liveLogs.value = consoleData.data;
+                }
+              } catch (e) {}
+
+              // ৩. সাকসেস ওটিপি ডাটা ফেচ
+              if (profile.value) {
+                try {
+                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + profile.value.api_key);
+                  const otpData = await otpRes.json();
+                  if (otpData.status === 'success') {
+                    successOtps.value = otpData.data;
+                  }
+                } catch (e) {}
+              }
+            };
 
             onMounted(() => {
               windowOrigin.value = window.location.origin; 
-
-              if (auth && db) {
-                auth.onAuthStateChanged(currentUser => {
-                  if (currentUser) {
-                    user.value = currentUser;
-
-                    db.collection('profiles').doc(currentUser.uid).onSnapshot(docSnap => {
-                      if (docSnap.exists) {
-                        profile.value = docSnap.data();
-                      }
-                    });
-
-                    db.collection('live_console').orderBy('createdAt', 'desc').limit(10).onSnapshot(snap => {
-                      const logs = [];
-                      snap.forEach(doc => logs.push({ id: doc.id, ...doc.data() }));
-                      liveLogs.value = logs;
-                    });
-
-                    db.collection('otp_logs').where('userId', '==', currentUser.uid).orderBy('createdAt', 'desc').limit(15).onSnapshot(snap => {
-                      const otps = [];
-                      snap.forEach(doc => otps.push({ id: doc.id, ...doc.data() }));
-                      successOtps.value = otps;
-                    });
-
-                  } else {
-                    user.value = null;
-                    profile.value = null;
-                  }
-                });
+              const token = localStorage.getItem('mino_session_token');
+              if (token) {
+                startPolling();
               }
             });
 
@@ -907,45 +888,38 @@ def index():
             });
 
             const handleAuth = async () => {
-              if (initError.value) {
-                alert("ফায়ারবেস ইনিশিয়ালাইজেশন সমস্যা: " + initError.value);
-                return;
-              }
-              if (!auth) {
-                alert("ফায়ারবেস সঠিকভাবে কনফিগার করা হয়নি।");
-                return;
-              }
               if (!authEmail.value || !authPassword.value) return;
               authLoading.value = true;
               try {
-                if (isRegistering.value) {
-                  const res = await fetch('/api/v1/auth/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: authEmail.value, password: authPassword.value })
-                  });
-                  const data = await res.json();
-                  
-                  if (data.status === 'success') {
-                    await auth.signInWithEmailAndPassword(authEmail.value, authPassword.value);
-                  } else {
-                    alert(data.message);
-                  }
+                const url = isRegistering.value ? '/api/v1/auth/register' : '/api/v1/auth/login';
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ email: authEmail.value, password: authPassword.value })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                  localStorage.setItem('mino_session_token', data.token);
+                  user.value = data.user;
+                  profile.value = data.user;
+                  startPolling();
                 } else {
-                  await auth.signInWithEmailAndPassword(authEmail.value, authPassword.value);
+                  alert(data.message);
                 }
               } catch (err) {
-                alert(err.message);
+                alert(err.message || 'Authentication failed');
               }
               authLoading.value = false;
             };
 
             const signOut = () => {
-              if (auth) {
-                auth.signOut();
-              }
+              localStorage.removeItem('mino_session_token');
+              user.value = null;
+              profile.value = null;
               activeNumber.value = null;
               otpResult.value = null;
+              stopPolling();
             };
 
             const handleGetNumber = async () => {
@@ -988,7 +962,7 @@ def index():
             };
 
             return {
-              initError, user, profile, authEmail, authPassword, isRegistering, authLoading,
+              user, profile, authEmail, authPassword, isRegistering, authLoading,
               currentTab, rid, activeNumber, otpResult, loadingNumber, liveLogs, successOtps, timeLeft,
               windowOrigin, handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, window
             };
@@ -998,13 +972,6 @@ def index():
     </body>
     </html>
     """
-    html_content = html_content.replace("__API_KEY__", "AIzaSyD89vR9ZHu2hTDBbOjTrH8CD7BovJe2LgE")
-    html_content = html_content.replace("__AUTH_DOMAIN__", "all-panel-support.firebaseapp.com")
-    html_content = html_content.replace("__PROJECT_ID__", "all-panel-support")
-    html_content = html_content.replace("__STORAGE_BUCKET__", "all-panel-support.firebasestorage.app")
-    html_content = html_content.replace("__MESSAGING_SENDER_ID__", "189478800502")
-    html_content = html_content.replace("__APP_ID__", "1:189478800502:web:e57ff2fefaa3d082b8a357")
-
     return Response(html_content, mimetype='text/html')
 
 if __name__ == '__main__':
