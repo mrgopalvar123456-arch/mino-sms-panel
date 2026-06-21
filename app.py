@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import secrets
 import datetime
 import requests
@@ -6,26 +8,68 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-# CORS পলিসি হ্যান্ডেল করার জন্য মেথড
+# CORS এবং এন্টি-ক্যাশিং পলিসি (মোবাইল ব্রাউজার বা Pydroid-এ ক্যাশিং সমস্যা এড়াতে)
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,X-MINO-API-KEY,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return response
 
 # =========================================================================
-# ইন-মেমোরি ডাটাবেজ (ফায়ারবেস সম্পূর্ণ রিমুভড)
+# ডেটটাইম ক্র্যাশ এড়ানোর জন্য সুরক্ষিত পার্সার
 # =========================================================================
-users = {}            # { uid: {email, password, api_key, balance, otp_rate, id_code, createdAt} }
-allocated_numbers = [] # [ {userId, number, rid, status, createdAt} ]
-otp_logs = []          # [ {userId, number, service, otpCode, message, revenue, createdAt} ]
-live_console = []      # [ {type, message, service, createdAt} ]
+def parse_iso_datetime(dt_str):
+    if not dt_str:
+        return datetime.datetime.now(datetime.timezone.utc)
+    if dt_str.endswith('Z'):
+        dt_str = dt_str[:-1] + '+00:00'
+    try:
+        return datetime.datetime.fromisoformat(dt_str)
+    except Exception:
+        try:
+            return datetime.datetime.strptime(dt_str.split('.')[0], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+        except Exception:
+            return datetime.datetime.now(datetime.timezone.utc)
 
+# =========================================================================
+# ফাইল-ভিত্তিক ডাটাবেজ (db.json)
+# =========================================================================
+DB_FILE = "db.json"
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {
+            "users": {},
+            "allocated_numbers": [],
+            "otp_logs": [],
+            "live_console": []
+        }
+    try:
+        with open(DB_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {
+            "users": {},
+            "allocated_numbers": [],
+            "otp_logs": [],
+            "live_console": []
+        }
+
+def save_db(db_data):
+    try:
+        with open(DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(db_data, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print("Error saving database:", e)
+
+# আপনার এপিআই কনফিগারেশন
 STEX_API_KEY = "MWF1Z0QG1DJ"
-STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX8U/tness/gpubliic/api"
+STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tness/@public/api"
 
-# নম্বর সিকিউরিটি মাস্কিং হেল্পার ফাংশন
 def mask_number(number):
     if not number:
         return ''
@@ -34,16 +78,15 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# টোকেন ব্যবহার করে রিকোয়েস্ট থেকে ইউজার খুঁজে বের করার ফাংশন
-def get_current_user():
+def get_current_user(db):
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return None
     token = auth_header.split(' ')[1]
-    return users.get(token)
+    return db["users"].get(token)
 
 # =========================================================================
-# এপিআই ০: সিকিউর রেজিস্ট্রেশন (ইন-মেমোরি)
+# এপিআইসমূহ
 # =========================================================================
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
@@ -55,15 +98,15 @@ def register():
         if not email or not password:
             return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
 
-        # চেক করা হচ্ছে মেইলটি আগে ব্যবহার করা হয়েছে কি না
-        for u in users.values():
+        db = load_db()
+        for u in db["users"].values():
             if u['email'] == email:
                 return jsonify({'status': 'error', 'message': 'Email already registered'}), 400
 
         uid = "usr_" + secrets.token_hex(8)
         unique_key = 'mino_live_' + secrets.token_hex(16)
 
-        users[uid] = {
+        db["users"][uid] = {
             'uid': uid,
             'email': email,
             'password': password,
@@ -73,14 +116,12 @@ def register():
             'id_code': f"MINO-{secrets.randbelow(9000) + 1000}",
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
-
-        return jsonify({'status': 'success', 'token': uid, 'user': users[uid]})
+        
+        save_db(db)
+        return jsonify({'status': 'success', 'token': uid, 'user': db["users"][uid]})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
-# =========================================================================
-# এপিআই ০.১: লগইন (ইন-মেমোরি)
-# =========================================================================
 @app.route('/api/v1/auth/login', methods=['POST'])
 def login():
     try:
@@ -91,7 +132,8 @@ def login():
         if not email or not password:
             return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
 
-        for uid, u in users.items():
+        db = load_db()
+        for uid, u in db["users"].items():
             if u['email'] == email and u['password'] == password:
                 return jsonify({'status': 'success', 'token': uid, 'user': u})
 
@@ -99,31 +141,33 @@ def login():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# =========================================================================
-# এপিআই ০.২: কারেন্ট ইউজার ডিটেইলস
-# =========================================================================
 @app.route('/api/v1/auth/me', methods=['GET'])
 def get_me():
-    u = get_current_user()
-    if not u:
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    return jsonify({'status': 'success', 'user': u})
+    try:
+        db = load_db()
+        u = get_current_user(db)
+        if not u:
+            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        return jsonify({'status': 'success', 'user': u})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# =========================================================================
-# এপিআই ১: গেট নাম্বার
-# =========================================================================
 @app.route('/api/v1/getnum', methods=['GET'])
 def getnum():
     try:
         rid = request.args.get('rid')
         api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
+        national = request.args.get('national', '1')
+        remove_plus = request.args.get('remove_plus', '1')
 
         if not api_key or not rid:
             return jsonify({'status': 'error', 'message': 'API Key or RID missing'}), 400
 
-        # এপিআই কী দিয়ে ইউজার খোঁজা
+        clean_rid = str(rid).upper().replace('X', '').strip()
+
+        db = load_db()
         user = None
-        for u in users.values():
+        for u in db["users"].values():
             if u['api_key'] == api_key:
                 user = u
                 break
@@ -132,62 +176,103 @@ def getnum():
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
 
         user_id = user['uid']
+        stex_data = None
+        last_error = "No number available on this range"
 
-        stex_response = requests.post(
-            f"{STEX_BASE_URL}/getnum",
-            json={'rid': rid},
-            headers={'mauthapi': STEX_API_KEY},
-            timeout=10
-        )
-        
-        if stex_response.status_code != 200:
-            return jsonify({'status': 'error', 'message': 'Gateway Temporarily Busy'}), 502
+        # পদ্ধতি ১: GET Request
+        try:
+            params = {
+                'rid': clean_rid,
+                'national': int(national),
+                'remove_plus': int(remove_plus)
+            }
+            res = requests.get(
+                f"{STEX_BASE_URL}/getnum",
+                params=params,
+                headers={'mauthapi': STEX_API_KEY},
+                timeout=10
+            )
+            if res.status_code == 200:
+                json_res = res.json()
+                meta = json_res.get('meta', {})
+                if meta.get('status') == 'ok' or meta.get('code') == 200:
+                    stex_data = json_res
+                else:
+                    last_error = json_res.get('message') or json_res.get('msg') or last_error
+        except Exception as e:
+            print("GET Attempt Failed:", e)
 
-        stex_data = stex_response.json()
-        if stex_data.get('status') != 'ok':
-            return jsonify({'status': 'error', 'message': 'No number available on this range'}), 400
+        # পদ্ধতি ২: POST JSON
+        if not stex_data:
+            try:
+                payload = {
+                    'rid': clean_rid,
+                    'national': int(national),
+                    'remove_plus': int(remove_plus)
+                }
+                res = requests.post(
+                    f"{STEX_BASE_URL}/getnum",
+                    json=payload,
+                    headers={'mauthapi': STEX_API_KEY},
+                    timeout=10
+                )
+                if res.status_code == 200:
+                    json_res = res.json()
+                    meta = json_res.get('meta', {})
+                    if meta.get('status') == 'ok' or meta.get('code') == 200:
+                        stex_data = json_res
+                    else:
+                        last_error = json_res.get('message') or json_res.get('msg') or last_error
+            except Exception as e:
+                print("POST JSON Attempt Failed:", e)
 
-        number = stex_data['data']['full_number']
+        if not stex_data:
+            return jsonify({'status': 'error', 'message': last_error}), 400
 
-        allocated_numbers.append({
+        data_payload = stex_data.get('data', {})
+        number = data_payload.get('full_number') or data_payload.get('national_number') or data_payload.get('no_plus_number')
+        country = data_payload.get('country', 'Guinea')
+        operator = data_payload.get('operator', 'Mobile')
+
+        db["allocated_numbers"].append({
             'userId': user_id,
             'number': number,
             'rid': rid,
             'status': 'active',
-            'createdAt': datetime.datetime.now(datetime.timezone.utc)
+            'country': country,
+            'operator': operator,
+            'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
 
-        live_console.append({
+        db["live_console"].append({
             'type': 'allocation',
             'message': f"Number {mask_number(number)} requested on range {rid}",
-            'service': stex_data['data'].get('operator', 'STEX Gateway'),
-            'createdAt': datetime.datetime.now(datetime.timezone.utc)
+            'service': operator,
+            'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
+        
+        save_db(db)
 
         return jsonify({
             'status': 'success',
             'number': number,
-            'country': stex_data['data'].get('country'),
-            'operator': stex_data['data'].get('operator')
+            'country': country,
+            'operator': operator
         })
 
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# =========================================================================
-# এপিআই ২: ওটিপি চেক (জিরো-লেটেন্সি ইন্টিগ্রেশন)
-# =========================================================================
-@app.route('/api/v1/get-otp', methods=['GET'])
-def get_otp():
+@app.route('/api/v1/user-allocations', methods=['GET'])
+def get_user_allocations():
     try:
-        number = request.args.get('number')
         api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
+        if not api_key:
+            return jsonify({'status': 'error', 'message': 'API Key is required'}), 401
 
-        if not api_key or not number:
-            return jsonify({'status': 'error', 'message': 'API Key and Number are required'}), 400
-
+        db = load_db()
         user = None
-        for u in users.values():
+        for u in db["users"].values():
             if u['api_key'] == api_key:
                 user = u
                 break
@@ -198,98 +283,116 @@ def get_otp():
         user_id = user['uid']
         otp_rate = float(user.get('otp_rate', 0.50))
 
-        # বরাদ্দকৃত নম্বর রেকর্ড খোঁজা হচ্ছে
-        alloc = None
-        for item in allocated_numbers:
-            if item['number'] == number and item['userId'] == user_id:
-                alloc = item
-                break
+        # ব্যাকগ্রাউন্ড সাকসেস ওটিপি রিড ও ম্যাপিং
+        try:
+            res = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=5)
+            if res.status_code == 200:
+                json_data = res.json()
+                meta = json_data.get('meta', {})
+                if meta.get('status') == 'ok' or meta.get('code') == 200:
+                    otps = json_data.get('data', {}).get('otps', [])
+                    for otp_item in otps:
+                        otp_num = str(otp_item.get('number', '')).replace('+', '').strip()
+                        
+                        for alloc in db["allocated_numbers"]:
+                            alloc_num = str(alloc.get('number', '')).replace('+', '').strip()
+                            if alloc['status'] == 'active' and (alloc_num in otp_num or otp_num in alloc_num):
+                                message = otp_item.get('message', '')
+                                
+                                # ওটিপি কোড পার্সিং
+                                otp_code = ""
+                                match = re.search(r'\b\d{4,8}\b', message)
+                                if match:
+                                    otp_code = match.group(0)
+                                else:
+                                    otp_code = "SUCCESS"
 
-        if not alloc:
-            return jsonify({'status': 'error', 'message': 'Number record not found'}), 404
+                                service = 'generic'
+                                msg_lower = message.lower()
+                                if 'facebook' in msg_lower or 'fb' in msg_lower:
+                                    service = 'facebook'
+                                elif 'instagram' in msg_lower or 'ig' in msg_lower:
+                                    service = 'instagram'
+                                elif 'whatsapp' in msg_lower or 'wa' in msg_lower:
+                                    service = 'whatsapp'
+                                elif 'telegram' in msg_lower or 'tg' in msg_lower:
+                                    service = 'telegram'
+                                elif 'google' in msg_lower or 'g-' in msg_lower:
+                                    service = 'google'
 
-        created_at = alloc.get('createdAt')
-        diff_seconds = 0
-        is_expired = False
-        if created_at:
-            now = datetime.datetime.now(datetime.timezone.utc)
-            diff = now - created_at
-            diff_seconds = diff.total_seconds()
-            is_expired = diff_seconds > (18 * 60)
+                                already_logged = False
+                                for log in db["otp_logs"]:
+                                    if log['number'] == alloc['number']:
+                                        already_logged = True
+                                        break
+                                
+                                if not already_logged:
+                                    user['balance'] = float(user.get('balance', 0.0)) + otp_rate
+                                    db["otp_logs"].append({
+                                        'userId': user_id,
+                                        'number': alloc['number'],
+                                        'service': service,
+                                        'otpCode': otp_code,
+                                        'message': message,
+                                        'revenue': otp_rate,
+                                        'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                    })
 
-        if is_expired or alloc.get('status') == 'expired':
-            alloc['status'] = 'expired'
-            return jsonify({'status': 'expired', 'message': 'Number expired (18 mins over)'})
+                                alloc['status'] = 'completed'
+                                alloc['otp'] = otp_code
+                                alloc['message'] = message
 
-        # অলরেডি ওটিপি এসে থাকলে তা চেক করা হচ্ছে
-        existing_otp = None
-        for log in otp_logs:
-            if log['number'] == number and log['userId'] == user_id:
-                existing_otp = log
-                break
+                                db["live_console"].append({
+                                    'type': 'otp_success',
+                                    'message': f"HIT! {service.upper()} OTP Received on {mask_number(alloc['number'])}!",
+                                    'service': service,
+                                    'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                })
+        except Exception as e:
+            print("Background OTP sync error:", e)
 
-        if existing_otp:
-            return jsonify({
-                'status': 'success',
-                'otp': existing_otp.get('otpCode'),
-                'message': existing_otp.get('message'),
-                'service': existing_otp.get('service')
-            })
-
-        stex_response = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=10)
+        # এক্সপায়ারড কাউন্টডাউন ও স্ট্যাটাস আপডেট
+        now = datetime.datetime.now(datetime.timezone.utc)
+        user_allocs = [alloc for alloc in db["allocated_numbers"] if alloc['userId'] == user_id]
         
-        if stex_response.status_code == 200:
-            stex_data = stex_response.json()
-            if stex_data.get('status') == 'ok' and stex_data['data'].get('number') == number:
-                otp_data = stex_data['data']
-                message = otp_data.get('message', '').lower()
-                service = None
+        for alloc in user_allocs:
+            if alloc.get('status') == 'active':
+                created_at_str = alloc.get('createdAt')
+                if created_at_str:
+                    created_at = parse_iso_datetime(created_at_str)
+                    elapsed_seconds = (now - created_at).total_seconds()
+                    if elapsed_seconds > (18 * 60):
+                        alloc['status'] = 'expired'
 
-                if 'facebook' in message or 'fb' in message:
-                    service = 'facebook'
-                elif 'instagram' in message or 'ig' in message:
-                    service = 'instagram'
+        save_db(db)
+        user_allocs.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
 
-                if service:
-                    # ব্যালেন্স আপডেট
-                    user['balance'] = float(user.get('balance', 0.0)) + otp_rate
-
-                    otp_logs.append({
-                        'userId': user_id,
-                        'number': number,
-                        'service': service,
-                        'otpCode': otp_data.get('otp'),
-                        'message': otp_data.get('message'),
-                        'revenue': otp_rate,
-                        'stexTime': otp_data.get('time'),
-                        'createdAt': datetime.datetime.now(datetime.timezone.utc)
-                    })
-
-                    alloc['status'] = 'completed'
-
-                    live_console.append({
-                        'type': 'otp_success',
-                        'message': f"HIT! {service.upper()} OTP Received on {mask_number(number)}!",
-                        'service': service,
-                        'createdAt': datetime.datetime.now(datetime.timezone.utc)
-                    })
-
-                    return jsonify({
-                        'status': 'success',
-                        'otp': otp_data.get('otp'),
-                        'message': otp_data.get('message'),
-                        'service': service
-                    })
-
-        seconds_left = max(0, int(18 * 60 - diff_seconds))
-        return jsonify({'status': 'pending', 'seconds_left': seconds_left})
-
+        return jsonify({'status': 'success', 'allocations': user_allocs})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# =========================================================================
-# এপিআই ৩: ওটিপি তালিকা দেখা
-# =========================================================================
+@app.route('/api/v1/live-console', methods=['GET'])
+def get_live_console():
+    try:
+        res = requests.get(f"{STEX_BASE_URL}/console", headers={'mauthapi': STEX_API_KEY}, timeout=5)
+        if res.status_code == 200:
+            stex_data = res.json()
+            meta = stex_data.get('meta', {})
+            if meta.get('status') == 'ok' or meta.get('code') == 200:
+                hits = stex_data.get('data', {}).get('hits', [])
+                data = []
+                for hit in hits[:15]:
+                    data.append({
+                        'range': hit.get('range', 'N/A'),
+                        'service': hit.get('sid', 'Global'),
+                        'message': hit.get('message', ''),
+                        'time': hit.get('time', 0)
+                    })
+                return jsonify({'status': 'success', 'data': data})
+    except Exception as e:
+        print("STEX Console API Error:", e)
+    return jsonify({'status': 'success', 'data': []})
+
 @app.route('/api/v1/success-otp', methods=['GET'])
 def success_otp():
     try:
@@ -297,8 +400,9 @@ def success_otp():
         if not api_key:
             return jsonify({'status': 'error', 'message': 'API Key is required'}), 401
 
+        db = load_db()
         user = None
-        for u in users.values():
+        for u in db["users"].values():
             if u['api_key'] == api_key:
                 user = u
                 break
@@ -306,20 +410,18 @@ def success_otp():
         if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
 
-        # ওটিপি রিভার্স সর্ট
-        user_logs = [log for log in otp_logs if log['userId'] == user['uid']]
+        user_logs = [log for log in db["otp_logs"] if log['userId'] == user['uid']]
         user_logs.sort(key=lambda x: x['createdAt'], reverse=True)
 
         data = []
         for d in user_logs[:15]:
-            created_at = d.get('createdAt')
             data.append({
                 'number': d.get('number'),
                 'service': d.get('service'),
                 'otp_code': d.get('otpCode'),
                 'message': d.get('message'),
                 'revenue_earned': d.get('revenue'),
-                'created_at': created_at.isoformat() if isinstance(created_at, datetime.datetime) else created_at
+                'created_at': d.get('createdAt')
             })
 
         return jsonify({'status': 'success', 'data': data})
@@ -327,25 +429,7 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# এপিআই ৪: গ্লোবাল কনসোল ডাটা রিড (পোলিংয়ের জন্য)
-# =========================================================================
-@app.route('/api/v1/live-console', methods=['GET'])
-def get_live_console():
-    # সর্বশেষ ১০ টি লগ পাঠানো হচ্ছে
-    logs_desc = sorted(live_console, key=lambda x: x['createdAt'], reverse=True)[:10]
-    data = []
-    for log in logs_desc:
-        created_at = log['createdAt']
-        data.append({
-            'type': log['type'],
-            'message': log['message'],
-            'service': log['service'],
-            'createdAt': created_at.isoformat() if isinstance(created_at, datetime.datetime) else created_at
-        })
-    return jsonify({'status': 'success', 'data': data})
-
-# =========================================================================
-# ফ্রন্টএন্ড UI পরিবেশন (Serving the Frontend Page)
+# ফ্রন্টএন্ড UI পরিবেশন (Serving HTML)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -361,32 +445,44 @@ def index():
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
       <style>
         [v-cloak] { display: none; }
-        body { background-color: #F3F7FA; }
+        body { background-color: #F8FAFC; }
       </style>
     </head>
-    <body class="text-slate-700 font-sans">
+    <body class="text-slate-700 font-sans select-none pb-16 md:pb-0">
+      
       <div id="app" v-cloak>
+
+        <!-- স্মার্ট ইনস্ট্যান্ট লোডিং সেকশন (Vue লোড হওয়ার পূর্ববর্তী সমাধান) -->
+        <div v-if="false" class="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center space-y-4">
+          <div class="h-12 w-12 border-4 border-[#0088CC] border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-xs font-black text-[#0088CC] uppercase tracking-widest animate-pulse">MINO PANEL LOADING...</p>
+        </div>
+
+        <!-- কপি টোস্ট নোটিফিকেশন -->
+        <div v-if="showToast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-[#0088CC] text-white font-black text-xs px-5 py-3.5 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
+          {{ toastMessage }}
+        </div>
 
         <!-- লগইন / সাইনআপ উইন্ডো -->
         <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
-          <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
+          <div class="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
             <div class="text-center space-y-2">
-              <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md">MINO</span>
-              <h1 class="text-2xl font-black text-slate-900">MINO SMS PANEL</h1>
-              <p class="text-xs font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register account' : 'Sign in to network' }}</p>
+              <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md w-max">MINO</span>
+              <h1 class="text-xl font-black text-slate-900">MINO SMS PANEL</h1>
+              <p class="text-[10px] font-semibold text-[#0088CC] uppercase tracking-widest">{{ isRegistering ? 'Register account' : 'Sign in to network' }}</p>
             </div>
 
             <form @submit.prevent="handleAuth" class="space-y-4">
               <div>
                 <label class="text-xs font-bold text-slate-500">Email</label>
-                <input type="email" required v-model="authEmail" placeholder="gopal@network.com" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
+                <input type="email" required v-model="authEmail" placeholder="gopal@network.com" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
               <div>
                 <label class="text-xs font-bold text-slate-500">Password</label>
-                <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
+                <input type="password" required v-model="authPassword" placeholder="••••••••" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-[#0088CC] transition" />
               </div>
 
-              <button type="submit" :disabled="authLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
+              <button type="submit" :disabled="authLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
                 {{ authLoading ? 'Please wait...' : (isRegistering ? 'REGISTER' : 'LOG IN') }}
               </button>
             </form>
@@ -402,142 +498,136 @@ def index():
         <!-- মেইন প্যানেল ড্যাশবোর্ড -->
         <div v-else class="min-h-screen flex flex-col md:flex-row">
           
-          <!-- সাইডবার -->
-          <aside class="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col">
+          <!-- ডেস্কটপ সাইডবার -->
+          <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
             <div class="p-6 border-b border-slate-100 flex items-center gap-3">
               <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
               <span class="text-lg font-black text-slate-950">MINO SMS</span>
-              <span class="bg-[#0088CC]/10 text-[#0088CC] text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-auto">V-3.0.2</span>
             </div>
 
-            <!-- মেনু ক্যাটাগরি -->
             <nav class="flex-1 p-4 space-y-1">
               <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                <i class="fa-solid fa-house"></i> ড্যাশবোর্ড (Dashboard)
+                <i class="fa-solid fa-house"></i> ড্যাশবোর্ড
               </button>
               <button @click="currentTab = 'get-number'" :class="currentTab === 'get-number' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                <i class="fa-solid fa-mobile-screen"></i> নাম্বার নিন (Get Number)
+                <i class="fa-solid fa-mobile-screen"></i> নাম্বার নিন
               </button>
               <button @click="currentTab = 'console'" :class="currentTab === 'console' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                <i class="fa-solid fa-terminal"></i> কনসোল (Console)
+                <i class="fa-solid fa-terminal"></i> কনসোল
               </button>
               <button @click="currentTab = 'payment'" :class="currentTab === 'payment' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                <i class="fa-solid fa-wallet"></i> পেমেন্ট (Payment)
+                <i class="fa-solid fa-wallet"></i> পেমেন্ট
               </button>
               <button @click="currentTab = 'profile'" :class="currentTab === 'profile' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
-                <i class="fa-solid fa-user"></i> প্রোফাইল (Profile)
+                <i class="fa-solid fa-user"></i> প্রোফাইল
               </button>
             </nav>
 
             <div class="p-4 border-t border-slate-100 flex items-center gap-3">
-              <div class="h-9 w-9 bg-indigo-500 rounded-full flex items-center justify-center text-white font-bold text-sm">GV</div>
-              <div class="flex-1">
-                <p class="text-xs font-black text-slate-800">Gopal Var</p>
-                <p class="text-[10px] text-slate-400">{{ user.email }}</p>
+              <div class="h-9 w-9 bg-[#0088CC] rounded-full flex items-center justify-center text-white font-bold text-sm">GV</div>
+              <div class="flex-1 overflow-hidden">
+                <p class="text-xs font-black text-slate-800 truncate">Gopal Var</p>
+                <p class="text-[10px] text-slate-400 truncate">{{ user.email }}</p>
               </div>
               <button @click="signOut" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-right-from-bracket"></i></button>
             </div>
           </aside>
 
+          <!-- মোবাইল বটম নেভিগেশন -->
+          <div class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around py-2 z-50 shadow-lg px-2">
+            <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
+              <i class="fa-solid fa-house text-lg"></i>
+              <span>হোম</span>
+            </button>
+            <button @click="currentTab = 'get-number'" :class="currentTab === 'get-number' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
+              <i class="fa-solid fa-mobile-screen text-lg"></i>
+              <span>নাম্বার নিন</span>
+            </button>
+            <button @click="currentTab = 'console'" :class="currentTab === 'console' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
+              <i class="fa-solid fa-terminal text-lg"></i>
+              <span>কনসোল</span>
+            </button>
+            <button @click="currentTab = 'payment'" :class="currentTab === 'payment' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
+              <i class="fa-solid fa-wallet text-lg"></i>
+              <span>পেমেন্ট</span>
+            </button>
+            <button @click="currentTab = 'profile'" :class="currentTab === 'profile' ? 'text-[#0088CC]' : 'text-slate-400'" class="flex flex-col items-center gap-1 text-[10px] font-bold py-1 flex-1">
+              <i class="fa-solid fa-user text-lg"></i>
+              <span>প্রোফাইল</span>
+            </button>
+          </div>
+
           <!-- মেইন কন্টেন্ট এরিয়া -->
-          <main class="flex-1 p-6 md:p-8 space-y-6 overflow-y-auto">
+          <main class="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto pb-24 md:pb-8">
             
             <!-- টপ হেডার -->
             <header class="flex justify-between items-center border-b border-slate-200 pb-4">
               <div class="flex items-center gap-2">
                 <span class="h-2.5 w-2.5 bg-[#0088CC] rounded-full"></span>
-                <h2 class="text-lg font-black text-slate-900 capitalize">{{ currentTab.replace('-', ' ') }} Panel</h2>
+                <h2 class="text-md md:text-lg font-black text-slate-900 capitalize">{{ currentTab.replace('-', ' ') }}</h2>
               </div>
-              <div class="flex items-center gap-4">
-                <button class="relative h-9 w-9 bg-white border border-slate-200 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-50">
-                  <i class="fa-solid fa-bell"></i>
-                  <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center">3</span>
-                </button>
-                <span class="bg-[#0088CC] text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">GV</span>
+              <div class="flex items-center gap-2">
+                <span class="bg-[#0088CC] text-white text-[10px] md:text-xs font-bold px-3 py-1.5 rounded-full shadow-sm">Gopal Var</span>
+                <button @click="signOut" class="md:hidden text-slate-400 hover:text-rose-600 p-2"><i class="fa-solid fa-right-from-bracket text-lg"></i></button>
               </div>
             </header>
 
             <!-- ==================== সেকশন ১: ড্যাশবোর্ড ==================== -->
-            <div v-if="currentTab === 'dashboard'" class="space-y-8">
-              
-              <!-- Wallet & OTP Report -->
+            <div v-if="currentTab === 'dashboard'" class="space-y-6">
               <div>
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">WALLET & OTP REPORT</h3>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <h3 class="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">WALLET & REPORT</h3>
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
                   
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-emerald-50 h-12 w-12 rounded-full flex items-center justify-center text-emerald-600"><i class="fa-solid fa-wallet text-lg"></i></div>
+                  <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3">
+                    <div class="bg-emerald-50 h-10 w-10 rounded-xl flex items-center justify-center text-emerald-600 shrink-0"><i class="fa-solid fa-wallet text-md"></i></div>
                     <div>
-                      <p class="text-xs text-slate-400 font-semibold">ওয়ালেট ব্যালেন্স</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h4>
+                      <p class="text-[10px] text-slate-400 font-bold">ব্যালেন্স</p>
+                      <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h4>
                     </div>
                   </div>
 
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-amber-50 h-12 w-12 rounded-full flex items-center justify-center text-amber-600"><i class="fa-solid fa-tag text-lg"></i></div>
+                  <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3">
+                    <div class="bg-amber-50 h-10 w-10 rounded-xl flex items-center justify-center text-amber-600 shrink-0"><i class="fa-solid fa-tag text-md"></i></div>
                     <div>
-                      <p class="text-xs text-slate-400 font-semibold">আপনার ওটিপি রেট</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">৳ {{ parseFloat(profile ? profile.otp_rate : 0.50).toFixed(2) }}</h4>
+                      <p class="text-[10px] text-slate-400 font-bold">ওটিপি রেট</p>
+                      <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.otp_rate : 0.50).toFixed(2) }}</h4>
                     </div>
                   </div>
 
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-blue-50 h-12 w-12 rounded-full flex items-center justify-center text-blue-600"><i class="fa-solid fa-box text-lg"></i></div>
+                  <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3 col-span-2 md:col-span-1">
+                    <div class="bg-blue-50 h-10 w-10 rounded-xl flex items-center justify-center text-blue-600 shrink-0"><i class="fa-solid fa-box text-md"></i></div>
                     <div>
-                      <p class="text-xs text-slate-400 font-semibold">আজকের মোট ওটিপি</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">{{ successOtps.length }}</h4>
-                    </div>
-                  </div>
-
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-violet-50 h-12 w-12 rounded-full flex items-center justify-center text-violet-600"><i class="fa-solid fa-envelope text-lg"></i></div>
-                    <div>
-                      <p class="text-xs text-slate-400 font-semibold">গতকালকের মোট ওটিপি</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
+                      <p class="text-[10px] text-slate-400 font-bold">আজকের মোট ওটিপি</p>
+                      <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">{{ successOtps.length }} টি</h4>
                     </div>
                   </div>
 
                 </div>
               </div>
 
-              <!-- Virtual Numbers Analytics -->
-              <div>
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">VIRTUAL NUMBERS ANALYTICS</h3>
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-blue-50 h-12 w-12 rounded-full flex items-center justify-center text-blue-600"><i class="fa-solid fa-list-numeric text-lg"></i></div>
-                    <div>
-                      <p class="text-xs text-slate-400 font-semibold">আজকের মোট নাম্বার</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
-                    </div>
-                  </div>
-
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-emerald-50 h-12 w-12 rounded-full flex items-center justify-center text-emerald-600"><i class="fa-solid fa-circle-check text-lg"></i></div>
-                    <div>
-                      <p class="text-xs text-slate-400 font-semibold">আজকের সফল নাম্বার</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
-                    </div>
-                  </div>
-
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-amber-50 h-12 w-12 rounded-full flex items-center justify-center text-amber-600"><i class="fa-solid fa-tower-broadcast text-lg"></i></div>
-                    <div>
-                      <p class="text-xs text-slate-400 font-semibold">গতকালকের মোট নাম্বার</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
-                    </div>
-                  </div>
-
-                  <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                    <div class="bg-purple-50 h-12 w-12 rounded-full flex items-center justify-center text-purple-600"><i class="fa-solid fa-folder-closed text-lg"></i></div>
-                    <div>
-                      <p class="text-xs text-slate-400 font-semibold">গতকালকের সফল নাম্বার</p>
-                      <h4 class="text-xl font-bold text-slate-900 mt-1">0</h4>
-                    </div>
-                  </div>
-
+              <!-- ওটিপি লগ লিস্ট -->
+              <div class="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-4 border-b border-slate-100 bg-slate-50/50">
+                  <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">সর্বশেষ ওটিপি রিপোর্ট</h4>
                 </div>
+
+                <div class="block divide-y divide-slate-100">
+                  <div v-if="successOtps.length === 0" class="p-8 text-center text-slate-400 font-semibold text-xs">
+                    কোনো ওটিপি ডাটা পাওয়া যায়নি।
+                  </div>
+                  <div v-else v-for="log in successOtps" :key="log.created_at" class="p-4 space-y-2 text-xs">
+                    <div class="flex justify-between items-center">
+                      <span class="font-bold text-slate-800 text-sm">{{ log.number }}</span>
+                      <span class="px-2 py-0.5 bg-[#0088CC]/10 text-[#0088CC] rounded text-[9px] font-bold uppercase">{{ log.service }}</span>
+                    </div>
+                    <div class="flex justify-between items-center bg-slate-50 p-2 rounded-xl">
+                      <span class="text-slate-400 font-bold">ওটিপি কোড:</span>
+                      <span class="font-bold text-emerald-600 text-sm">{{ log.otp_code }}</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 leading-relaxed font-medium"><strong class="text-slate-700">মেসেজ:</strong> {{ log.message }}</p>
+                  </div>
+                </div>
+
               </div>
 
             </div>
@@ -545,241 +635,190 @@ def index():
             <!-- ==================== সেকশন ২: নাম্বার নিন ==================== -->
             <div v-if="currentTab === 'get-number'" class="space-y-6">
               
-              <!-- 4 metrics -->
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div class="bg-white p-4 rounded-2xl border border-slate-200 flex items-center gap-3">
-                  <div class="bg-slate-100 h-9 w-9 rounded-lg flex items-center justify-center text-slate-500"><i class="fa-solid fa-chart-bar text-sm"></i></div>
-                  <div>
-                    <p class="text-[10px] text-slate-400 font-bold uppercase">TODAY'S TOTAL</p>
-                    <h5 class="text-sm font-black text-slate-900">0</h5>
-                  </div>
-                </div>
-                <div class="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex items-center gap-3">
-                  <div class="bg-emerald-100/50 h-9 w-9 rounded-lg flex items-center justify-center text-emerald-600"><i class="fa-solid fa-circle-check text-sm"></i></div>
-                  <div>
-                    <p class="text-[10px] text-emerald-600 font-bold uppercase">OTP SUCCESS</p>
-                    <h5 class="text-sm font-black text-emerald-700">0</h5>
-                  </div>
-                </div>
-                <div class="bg-amber-50 p-4 rounded-2xl border border-amber-100 flex items-center gap-3">
-                  <div class="bg-amber-100/50 h-9 w-9 rounded-lg flex items-center justify-center text-amber-600"><i class="fa-solid fa-clock-rotate-left text-sm"></i></div>
-                  <div>
-                    <p class="text-[10px] text-amber-600 font-bold uppercase">LIVE PENDING</p>
-                    <h5 class="text-sm font-black text-amber-700">0</h5>
-                  </div>
-                </div>
-                <div class="bg-rose-50 p-4 rounded-2xl border border-rose-100 flex items-center gap-3">
-                  <div class="bg-rose-100/50 h-9 w-9 rounded-lg flex items-center justify-center text-rose-600"><i class="fa-solid fa-triangle-exclamation text-sm"></i></div>
-                  <div>
-                    <p class="text-[10px] text-rose-600 font-bold uppercase">FAILED/LOST</p>
-                    <h5 class="text-sm font-black text-rose-700">0</h5>
-                  </div>
-                </div>
-              </div>
-
               <!-- Range Box UI -->
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <div class="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  <i class="fa-solid fa-mobile-button text-[#0088CC]"></i> Your Choice Range
+              <div class="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div class="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  <i class="fa-solid fa-mobile-button text-[#0088CC]"></i> আপনার কাঙ্ক্ষিত রেঞ্জ (Your Range)
                 </div>
-                <input type="text" v-model="rid" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-lg font-black outline-none tracking-wide text-[#0088CC] focus:border-[#0088CC]" />
+                <input type="text" v-model="rid" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-lg font-black outline-none tracking-wider text-[#0088CC] focus:border-[#0088CC] text-center" />
                 
-                <div class="flex items-center gap-4 text-xs font-bold text-slate-400 py-1">
-                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="rounded text-[#0088CC]" /> National Format</label>
-                  <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="rounded text-[#0088CC]" /> Remove (+)</label>
+                <div class="flex items-center gap-4 text-xs font-bold text-slate-400 py-1 justify-center">
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="nationalFormat" class="rounded text-[#0088CC]" /> National Format
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" v-model="removePlus" class="rounded text-[#0088CC]" /> Remove (+)
+                  </label>
                 </div>
 
-                <button @click="handleGetNumber" :disabled="loadingNumber" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 disabled:bg-slate-300">
+                <button @click="handleGetNumber" :disabled="loadingNumber" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-4 rounded-2xl shadow-md transition flex items-center justify-center gap-2 disabled:bg-slate-300 active:scale-[0.98]">
                   <i v-if="loadingNumber" class="fa-solid fa-spinner animate-spin"></i>
-                  <span class="tracking-widest"><i class="fa-solid fa-bolt mr-1"></i> GET NUMBER</span>
+                  <span class="tracking-widest font-black"><i class="fa-solid fa-bolt mr-1"></i> GET NUMBER</span>
                 </button>
               </div>
 
-              <!-- Active/Logs Number Table -->
-              <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-                  <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">Active Phone Allocations</h4>
-                  <button @click="handleCheckOtp" class="text-xs text-[#0088CC] font-bold hover:underline"><i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh</button>
+              <!-- সক্রিয় নম্বরের তালিকা (সেম টু সেম ডিজাইন + কপি অন ক্লিক) -->
+              <div class="space-y-4">
+                
+                <!-- লাইভ সার্চ বার ও পেজিনেশন -->
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 px-2">
+                  <input type="text" v-model="searchQuery" placeholder="নম্বর বা দেশ দিয়ে খুঁজুন..." class="w-full sm:w-64 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC]" />
+                  <div class="flex gap-2 text-[10px] font-bold text-slate-400 items-center">
+                    <button @click="prevPage" :disabled="currentPage === 1" class="bg-white border rounded-xl px-3 py-1.5 disabled:opacity-50 shadow-xs">Prev</button>
+                    <span>Page {{ currentPage }} of {{ totalPages }}</span>
+                    <button @click="nextPage" :disabled="currentPage === totalPages" class="bg-white border rounded-xl px-3 py-1.5 disabled:opacity-50 shadow-xs">Next</button>
+                  </div>
                 </div>
 
-                <div class="overflow-x-auto">
-                  <table class="w-full text-left text-xs">
-                    <thead class="bg-slate-50 uppercase text-slate-400 font-bold border-b border-slate-100">
-                      <tr>
-                        <th class="p-4">PHONE & STATUS</th>
-                        <th class="p-4">OTP / SMS</th>
-                        <th class="p-4">COUNTRY / OPERATOR</th>
-                        <th class="p-4">TIMER / EXPIRY</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-100">
-                      <tr v-if="!activeNumber">
-                        <td colspan="4" class="p-8 text-center text-slate-400 font-semibold">No active allocations found. Enter a range and click Get Number!</td>
-                      </tr>
-                      <tr v-else>
-                        <td class="p-4">
-                          <p class="font-bold text-slate-800 text-sm">{{ activeNumber }}</p>
-                          <span class="bg-amber-100 text-amber-700 text-[9px] font-black px-2 py-0.5 rounded-full mt-1 inline-block uppercase">PENDING</span>
-                        </td>
-                        <td class="p-4">
-                          <p v-if="!otpResult" class="text-slate-400 font-semibold animate-pulse">Waiting for incoming SMS...</p>
-                          <div v-else class="bg-emerald-50 border border-emerald-100 p-2.5 rounded-xl text-emerald-800">
-                            <strong>{{ otpResult.otp }}</strong> - {{ otpResult.message }}
-                          </div>
-                        </td>
-                        <td class="p-4">
-                          <p class="font-bold text-slate-700">IVORY COAST</p>
-                          <p class="text-[10px] text-slate-400 uppercase">AIRCOMM SA</p>
-                        </td>
-                        <td class="p-4">
-                          <div v-if="timeLeft > 0" class="bg-amber-50 text-amber-700 text-xs font-bold py-1 px-3 rounded-full inline-block">
-                            {{ formatTime(timeLeft) }}
-                          </div>
-                          <div v-else class="bg-rose-50 text-rose-600 text-xs font-bold py-1 px-3 rounded-full inline-block">
-                            EXPIRED / OFF
-                          </div>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <!-- নম্বর আইটেমগুলির তালিকা (Screenshot 5 লেআউট) -->
+                <div v-if="paginatedAllocations.length === 0" class="bg-white p-12 text-center text-slate-400 border rounded-3xl font-semibold text-xs">
+                  কোনো নম্বর তালিকা পাওয়া যায়নি।
                 </div>
+
+                <div v-else class="space-y-3">
+                  <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white p-4 rounded-3xl border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition hover:shadow-xs hover:border-slate-300">
+                    
+                    <!-- Left: Number & Status Badges -->
+                    <div class="space-y-1.5 shrink-0">
+                      <div @click="copyToClipboard(alloc.number)" class="flex items-center gap-1.5 cursor-pointer hover:opacity-80 active:scale-95 transition">
+                        <span class="font-black text-slate-800 text-sm tracking-wider">{{ alloc.number }}</span>
+                        <i class="fa-regular fa-copy text-xs text-[#0088CC]"></i>
+                      </div>
+                      
+                      <div class="flex gap-1.5">
+                        <span v-if="alloc.status === 'active'" class="bg-amber-50 text-amber-600 text-[9px] font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                          <i class="fa-solid fa-spinner animate-spin text-[8px]"></i> PENDING
+                        </span>
+                        <span v-else-if="alloc.status === 'completed'" class="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">
+                          SUCCESS
+                        </span>
+                        <span v-else class="bg-slate-100 text-slate-500 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">
+                          EXPIRED
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Middle Left: Dynamic OTP Box (ক্লিক করলে মেসেজ কপি হবে এবং সুন্দর ওটিপি দেখাবে) -->
+                    <div class="flex-1 min-w-0 w-full sm:w-auto">
+                      
+                      <!-- অপেক্ষমান স্ট্যাটাস -->
+                      <div v-if="alloc.status === 'active'" class="text-xs text-slate-400 font-black italic animate-pulse flex items-center gap-1">
+                        <i class="fa-solid fa-spinner animate-spin"></i> Waiting for incoming SMS...
+                      </div>
+                      
+                      <!-- ওটিপি সফল বক্স (চাহিদা অনুযায়ী ডিজাইন করা হলো) -->
+                      <div v-else-if="alloc.status === 'completed'" @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-200 p-2.5 rounded-2xl text-emerald-800 text-xs cursor-pointer active:scale-95 transition-all flex items-center justify-between gap-3 group">
+                        <div class="min-w-0">
+                          <span class="text-[9px] text-emerald-600 font-bold uppercase tracking-wider block">OTP CODE (CLICK TO COPY FULL SMS)</span>
+                          <span class="text-lg md:text-xl font-black text-emerald-800 block tracking-widest mt-0.5">
+                            {{ alloc.otp }}
+                          </span>
+                        </div>
+                        <div class="bg-emerald-500 group-hover:bg-emerald-600 text-white h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-xs transition">
+                          <i class="fa-regular fa-envelope-open text-xs"></i>
+                        </div>
+                      </div>
+                      
+                      <!-- এক্সপায়ারড নম্বর -->
+                      <div v-else class="text-xs text-rose-500 font-bold">
+                        Banned / Closed (18 mins over)
+                      </div>
+
+                    </div>
+
+                    <!-- Middle Right: Country/Operator -->
+                    <div class="text-left sm:text-right shrink-0">
+                      <p class="font-black text-slate-700 text-xs uppercase">{{ alloc.country }}</p>
+                      <p class="text-[9px] text-slate-400 font-black uppercase mt-0.5">{{ alloc.operator }}</p>
+                    </div>
+
+                    <!-- Right Side: Expiry / Expiration Countdown -->
+                    <div class="shrink-0 w-full sm:w-auto flex justify-end">
+                      <div class="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-black py-1 px-3 rounded-xl min-w-[70px] text-center tracking-wider">
+                        {{ alloc.status === 'active' && alloc.timeLeft > 0 ? formatTime(alloc.timeLeft) : '--:--' }}
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
               </div>
 
             </div>
 
-            <!-- ==================== সেকশন ৩: কনসোল (Global Radar) ==================== -->
+            <!-- ==================== সেকশন ৩: কনসোল ==================== -->
             <div v-if="currentTab === 'console'" class="space-y-6">
-              
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-center">
+              <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
                 <div>
                   <div class="flex items-center gap-2">
-                    <i class="fa-solid fa-satellite-dish text-[#0088CC] text-xl animate-pulse"></i>
-                    <h2 class="text-lg font-black text-slate-900">GLOBAL RADAR</h2>
+                    <i class="fa-solid fa-satellite-dish text-[#0088CC] text-lg animate-pulse"></i>
+                    <h2 class="text-md font-black text-slate-900">GLOBAL INTERCEPT RADAR</h2>
                   </div>
-                  <p class="text-xs text-slate-400 font-medium mt-1">Intercepting latest 100 secure network signals.</p>
-                </div>
-                <span class="bg-red-50 text-red-600 text-[10px] font-black px-3 py-1 rounded-full border border-red-100 uppercase flex items-center gap-1">
-                  <span class="h-1.5 w-1.5 bg-red-600 rounded-full animate-ping"></span> Live Radar
-                </span>
-              </div>
-
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <span class="text-xs font-black text-slate-400 uppercase tracking-widest"><i class="fa-solid fa-chart-simple mr-1"></i> Network Traffic Intelligence</span>
-                <div class="h-36 flex items-end gap-6 px-4 border-b border-slate-100">
-                  <div class="w-full bg-[#0088CC] rounded-t-md h-32 flex items-center justify-center text-white text-[10px] font-bold">Facebook</div>
-                  <div class="w-1/4 bg-rose-500 rounded-t-md h-4 flex items-center justify-center text-white text-[10px] font-bold">Instagram</div>
-                  <div class="w-1/4 bg-amber-500 rounded-t-md h-2 flex items-center justify-center text-white text-[10px] font-bold">Network</div>
+                  <p class="text-[10px] text-slate-400 font-medium mt-1">যেকোনো কার্ডের উপর ক্লিক করলেই এর রেঞ্জ কপি হয়ে যাবে।</p>
                 </div>
               </div>
 
-              <div class="bg-white p-4 rounded-2xl border border-slate-200 flex items-center gap-3">
-                <i class="fa-solid fa-magnifying-glass text-slate-400"></i>
-                <input type="text" placeholder="Search intercepted platform (e.g. facebook)" class="w-full text-sm outline-none font-semibold text-slate-700 bg-transparent" />
-                <button class="bg-[#0088CC] hover:bg-[#0077B5] text-white p-2.5 rounded-xl"><i class="fa-solid fa-arrows-rotate"></i></button>
-              </div>
-
-              <div class="space-y-4">
-                <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl">Radar initializing... Listening for signals...</div>
-                <div v-else v-for="log in liveLogs" :key="log.id" class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex justify-between items-center animate-fade-in">
+              <div class="space-y-3">
+                <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl text-xs">সিগন্যাল ট্র্যাকিং ইনিশিয়ালাইজ হচ্ছে...</div>
+                
+                <div v-else v-for="log in liveLogs" :key="log.time" @click="copyToClipboard(log.range)" class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition active:scale-[0.99] space-y-2">
+                  <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
+                    <!-- সার্ভিস নাম উপরে বোল্ড বড় করে থাকবে -->
+                    <span class="text-sm font-black text-[#0088CC] uppercase tracking-wide">
+                      {{ log.service }}
+                    </span>
+                    <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
+                      Range: {{ log.range }} (Click to Copy)
+                    </span>
+                  </div>
                   <div class="space-y-1">
-                    <span class="bg-[#0088CC]/10 text-[#0088CC] text-[10px] font-black px-2 py-0.5 rounded-full mr-2">LIVE INTERCEPT</span>
-                    <p class="font-mono font-black text-slate-800 text-sm mt-1">{{ log.message }}</p>
-                    <p class="text-[10px] text-slate-400 capitalize">{{ log.service || 'Global Gateway' }}</p>
+                    <p class="font-mono font-bold text-slate-800 text-[11px] leading-tight break-words">
+                      {{ log.message }}
+                    </p>
                   </div>
-                  <button class="bg-slate-50 hover:bg-slate-100 text-slate-500 text-xs font-bold px-3 py-2 rounded-xl flex items-center gap-1 transition">
-                    <i class="fa-solid fa-copy"></i> Copy
-                  </button>
                 </div>
               </div>
-
             </div>
 
             <!-- ==================== সেকশন ৪: পেমেন্ট ==================== -->
             <div v-if="currentTab === 'payment'" class="space-y-6">
-              
-              <div class="bg-white p-6 rounded-3xl border border-[#0088CC]/20 shadow-xs space-y-4">
-                <h3 class="font-black text-sm text-slate-800 flex items-center gap-2"><i class="fa-solid fa-wallet text-[#0088CC]"></i> ওয়ালেট সেটআপ</h3>
+              <div class="bg-white p-5 rounded-3xl border border-[#0088CC]/20 shadow-xs space-y-4">
+                <h3 class="font-black text-xs text-slate-800 flex items-center gap-2"><i class="fa-solid fa-wallet text-[#0088CC]"></i> ওয়ালেট ব্যালেন্স</h3>
                 <div class="bg-indigo-50/50 border border-indigo-100 p-4 rounded-xl flex justify-between items-center">
                   <div>
-                    <p class="text-[10px] text-slate-400 font-bold uppercase">Binance Pay ID / TRC20 (Active)</p>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase">Binance Pay ID / TRC20</p>
                     <p class="font-mono font-black text-indigo-700 mt-1">1229559831</p>
                   </div>
-                  <span class="bg-[#0088CC] text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-sm"><i class="fa-brands fa-bitcoin"></i> TRC20</span>
+                  <span class="bg-[#0088CC] text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm"><i class="fa-brands fa-bitcoin"></i> TRC20</span>
                 </div>
-                <p class="text-xs text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-100 leading-relaxed"><i class="fa-solid fa-triangle-exclamation mr-1"></i> আপনার ওয়ালেট পরিবর্তন বা আপডেট করতে চাইলে আপনার এজেন্টের সাথে যোগাযোগ করুন।</p>
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-center">
-                  <div>
-                    <p class="text-xs font-semibold text-slate-400 uppercase tracking-wider">বর্তমান ব্যালেন্স</p>
-                    <h2 class="text-3xl font-black text-[#0088CC] mt-1">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h2>
-                  </div>
-                  <div class="bg-[#0088CC]/10 h-12 w-12 rounded-full flex items-center justify-center text-[#0088CC] text-lg font-bold">৳</div>
+              <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
+                <div>
+                  <p class="text-[10px] font-bold text-slate-400 uppercase">মোট অর্জিত আয়</p>
+                  <h2 class="text-xl font-black text-[#0088CC] mt-0.5">৳ {{ parseFloat(profile ? profile.balance : 0).toFixed(2) }}</h2>
                 </div>
-
-                <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-3">
-                  <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><i class="fa-solid fa-lock text-rose-500"></i> উইথড্র রিকোয়েস্ট দিন</h4>
-                  <p class="text-xs text-rose-600 bg-rose-50 p-3 rounded-lg border border-rose-100 font-bold"><i class="fa-solid fa-triangle-exclamation mr-1"></i> অ্যাডমিন কর্তৃক পেমেন্ট সিস্টেম সাময়িকভাবে বন্ধ রাখা হয়েছে। অনুগ্রহ করে অপেক্ষা করুন।</p>
-                </div>
-
+                <div class="bg-[#0088CC]/10 h-10 w-10 rounded-full flex items-center justify-center text-[#0088CC] text-md font-bold">৳</div>
               </div>
-
-              <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <div class="p-4 border-b border-slate-200 bg-slate-50">
-                  <h3 class="font-bold text-sm text-slate-800">উইথড্র ইতিহাস (Withdrawal Logs)</h3>
-                </div>
-                <div class="p-12 text-center text-slate-400 font-semibold text-xs">No withdrawal history found.</div>
-              </div>
-
             </div>
 
             <!-- ==================== সেকশন ৫: প্রোফাইল ==================== -->
             <div v-if="currentTab === 'profile'" class="space-y-6">
-              
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-6">
-                <div class="h-20 w-20 bg-indigo-500 rounded-full flex items-center justify-center text-white font-bold text-sm">GV</div>
-                <div class="flex-1">
-                  <p class="text-xs font-black text-slate-800">Gopal Var</p>
-                  <p class="text-[10px] text-slate-400">{{ user.email }}</p>
+              <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex items-center gap-4">
+                <div class="h-14 w-14 bg-[#0088CC] rounded-full flex items-center justify-center text-white font-bold text-sm">GV</div>
+                <div class="flex-1 overflow-hidden">
+                  <p class="text-sm font-black text-slate-800">Gopal Var</p>
+                  <p class="text-[10px] text-slate-400 truncate">{{ user.email }}</p>
                 </div>
               </div>
 
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <h3 class="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">ব্যক্তিগত তথ্য</h3>
-                
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label class="text-xs font-bold text-slate-400 uppercase">সম্পূর্ণ নাম</label>
-                    <input type="text" readonly value="Gopal Var" class="w-full mt-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none" />
-                  </div>
-                  <div>
-                    <label class="text-xs font-bold text-slate-400 uppercase">মোবাইল নম্বর</label>
-                    <input type="text" readonly value="01722259318" class="w-full mt-1.5 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none" />
-                  </div>
-                </div>
-
-                <div class="pt-4 flex flex-wrap gap-4">
-                  <button class="bg-[#0088CC]/10 hover:bg-[#0088CC]/20 text-[#0088CC] text-xs font-bold px-4 py-2.5 rounded-xl transition"><i class="fa-solid fa-link mr-1"></i> Link Google Account</button>
-                  <button class="bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold px-4 py-2.5 rounded-xl transition"><i class="fa-solid fa-paper-plane mr-1"></i> Contact Agent</button>
+              <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3 text-xs">
+                <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">প্রোফাইল ইনফো</h3>
+                <div class="space-y-2 font-semibold">
+                  <p class="text-slate-500">ইউজার আইডি: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
+                  <p class="text-slate-500">এপিআই কি: <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-1.5 py-0.5 rounded break-all select-all ml-1">{{ profile ? profile.api_key : 'N/A' }}</span></p>
                 </div>
               </div>
-
-              <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-                <h3 class="font-bold text-sm text-slate-800">অফিশিয়াল চ্যানেল</h3>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <a href="#" class="bg-sky-50 hover:bg-sky-100 p-4 rounded-2xl border border-sky-100 flex items-center justify-between text-sky-700 transition">
-                    <span class="font-bold text-xs"><i class="fa-brands fa-telegram mr-1.5 text-lg"></i> Earning Center (মাদার কোম্পানি)</span>
-                    <i class="fa-solid fa-circle-arrow-right"></i>
-                  </a>
-                  <a href="#" class="bg-sky-50 hover:bg-sky-100 p-4 rounded-2xl border border-sky-100 flex items-center justify-between text-sky-700 transition">
-                    <span class="font-bold text-xs"><i class="fa-brands fa-telegram mr-1.5 text-lg"></i> MK Official (সাব ব্র্যান্ড)</span>
-                    <i class="fa-solid fa-circle-arrow-right"></i>
-                  </a>
-                </div>
-              </div>
-
             </div>
 
           </main>
@@ -787,7 +826,7 @@ def index():
       </div>
 
       <script>
-        const { createApp, ref, onMounted, watch } = Vue;
+        const { createApp, ref, onMounted, watch, computed } = Vue;
 
         createApp({
           setup() {
@@ -800,22 +839,122 @@ def index():
 
             const currentTab = ref('dashboard');
 
-            const rid = ref('225071XXXXXXX');
+            const rid = ref('22465468XXX'); 
+            const nationalFormat = ref(true); 
+            const removePlus = ref(true);     
+            
             const activeNumber = ref(null);
+            const activeCountry = ref('');
+            const activeOperator = ref('');
             const otpResult = ref(null);
             const loadingNumber = ref(false);
             const liveLogs = ref([]);
             const successOtps = ref([]);
-            const timeLeft = ref(1080);
-            const windowOrigin = ref(''); 
-            let timer = null;
-            let pollingTimer = null;
+            
+            // সার্চ এবং ফিল্টারিং ভেরিয়েবল
+            const searchQuery = ref('');
 
-            // ডাটা পোলিং শুরু করার মেথড (ফায়ারবেস স্ন্যাপশটের বিকল্প)
+            // নম্বর লিস্ট এবং পেজিনেশন কনফিগারেশন (২০০ টি প্রতি পেজে)
+            const allocations = ref([]);
+            const currentPage = ref(1);
+            const itemsPerPage = 200;
+
+            // কপি ক্লিপবোর্ড টোস্ট
+            const showToast = ref(false);
+            const toastMessage = ref('');
+
+            // স্মার্ট ব্রাউজার-সাউন্ড প্লেয়ার (মৃদু মিষ্টি নোটিফিকেশন সংকেত)
+            const playBeep = () => {
+              try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = "sine";
+                osc.frequency.setValueAtTime(880, ctx.currentTime); 
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.15); 
+              } catch (e) {
+                console.log("Audio notify failed:", e);
+              }
+            };
+
+            const triggerToast = (msg) => {
+              toastMessage.value = msg;
+              showToast.value = true;
+              setTimeout(() => {
+                showToast.value = false;
+              }, 2000);
+            };
+
+            const copyToClipboard = (text) => {
+              if (!text) return;
+              navigator.clipboard.writeText(text);
+              triggerToast("কপি করা হয়েছে: " + text);
+            };
+
+            const copyFullSms = (messageText) => {
+              if (!messageText) return;
+              navigator.clipboard.writeText(messageText);
+              triggerToast("সম্পূর্ণ ওটিপি মেসেজ কপি হয়েছে! ✅");
+            };
+
+            // ডাইনামিক ফিল্টারকৃত নম্বর তালিকা
+            const filteredAllocations = computed(() => {
+              if (!allocations.value) return [];
+              const q = searchQuery.value.toLowerCase().trim();
+              if (!q) return allocations.value;
+              return allocations.value.filter(alloc => 
+                (alloc.number && alloc.number.includes(q)) || 
+                (alloc.country && alloc.country.toLowerCase().includes(q)) ||
+                (alloc.operator && alloc.operator.toLowerCase().includes(q))
+              );
+            });
+
+            // পেজিনেশন লজিক
+            const paginatedAllocations = computed(() => {
+              if (!filteredAllocations.value) return [];
+              const start = (currentPage.value - 1) * itemsPerPage;
+              const end = start + itemsPerPage;
+              return filteredAllocations.value.slice(start, end);
+            });
+
+            const totalPages = computed(() => {
+              return Math.ceil(filteredAllocations.value.length / itemsPerPage) || 1;
+            });
+
+            const prevPage = () => {
+              if (currentPage.value > 1) currentPage.value--;
+            };
+
+            const nextPage = () => {
+              if (currentPage.value < totalPages.value) currentPage.value++;
+            };
+
+            // এক্সপায়রি কাউন্টডাউন টাইমার লুপ (১৮ মিনিট চেক)
+            const updateTimers = () => {
+              if (!allocations.value) return;
+              allocations.value.forEach(alloc => {
+                if (alloc.status === 'active') {
+                  const createdAt = new Date(alloc.createdAt);
+                  const elapsedSeconds = Math.floor((new Date() - createdAt) / 1000);
+                  const remaining = Math.max(0, 1080 - elapsedSeconds);
+                  alloc.timeLeft = remaining;
+                  if (remaining === 0) {
+                    alloc.status = 'expired';
+                  }
+                } else {
+                  alloc.timeLeft = 0;
+                }
+              });
+            };
+
             const startPolling = () => {
               stopPolling();
               fetchData();
-              pollingTimer = setInterval(fetchData, 4000); // প্রতি ৪ সেকেন্ড পর ডাটা আপডেট হবে
+              pollingTimer = setInterval(fetchData, 1000); // ১ সেকেন্ড (ন্যানো-গতি পোলিং স্পিড)
             };
 
             const stopPolling = () => {
@@ -829,7 +968,6 @@ def index():
               const token = localStorage.getItem('mino_session_token');
               if (!token) return;
 
-              // ১. ইউজার প্রোফাইল ডাটা ফেচ
               try {
                 const profileRes = await fetch('/api/v1/auth/me', {
                   headers: { 'Authorization': `Bearer ${token}` }
@@ -844,7 +982,28 @@ def index():
                 }
               } catch (e) {}
 
-              // ২. গ্লোবাল লাইভ কনসোল ডাটা ফেচ
+              if (profile.value) {
+                try {
+                  const allocRes = await fetch('/api/v1/user-allocations', {
+                    headers: { 'X-MINO-API-KEY': profile.value.api_key }
+                  });
+                  const allocData = await allocRes.json();
+                  if (allocData.status === 'success') {
+                    const prevCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    
+                    allocations.value = allocData.allocations;
+                    updateTimers();
+
+                    // সাউন্ড নোটিফিকেশন চেক (নতুন ওটিপি আসার সংকেত)
+                    const newCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    if (newCompletedCount > prevCompletedCount && prevCompletedCount > 0) {
+                      playBeep();
+                      triggerToast("নতুন ওটিপি রিসিভ হয়েছে! 🔔");
+                    }
+                  }
+                } catch (e) {}
+              }
+
               try {
                 const consoleRes = await fetch('/api/v1/live-console');
                 const consoleData = await consoleRes.json();
@@ -853,7 +1012,6 @@ def index():
                 }
               } catch (e) {}
 
-              // ৩. সাকসেস ওটিপি ডাটা ফেচ
               if (profile.value) {
                 try {
                   const otpRes = await fetch('/api/v1/success-otp?api_key=' + profile.value.api_key);
@@ -866,25 +1024,11 @@ def index():
             };
 
             onMounted(() => {
-              windowOrigin.value = window.location.origin; 
               const token = localStorage.getItem('mino_session_token');
               if (token) {
                 startPolling();
               }
-            });
-
-            watch(activeNumber, (newVal) => {
-              if (newVal) {
-                timeLeft.value = 1080;
-                clearInterval(timer);
-                timer = setInterval(() => {
-                  if (timeLeft.value > 0) {
-                    timeLeft.value--;
-                  } else {
-                    clearInterval(timer);
-                  }
-                }, 1000);
-              }
+              setInterval(updateTimers, 1000);
             });
 
             const handleAuth = async () => {
@@ -919,6 +1063,7 @@ def index():
               profile.value = null;
               activeNumber.value = null;
               otpResult.value = null;
+              allocations.value = [];
               stopPolling();
             };
 
@@ -926,11 +1071,17 @@ def index():
               if (!profile.value) return;
               loadingNumber.value = true;
               otpResult.value = null;
+              activeNumber.value = null;
+              activeCountry.value = '';
+              activeOperator.value = '';
               try {
-                const res = await fetch('/api/v1/getnum?rid=' + rid.value + '&api_key=' + profile.value.api_key);
+                const natVal = nationalFormat.value ? 1 : 0;
+                const remVal = removePlus.value ? 1 : 0;
+                const res = await fetch(`/api/v1/getnum?rid=${rid.value}&api_key=${profile.value.api_key}&national=${natVal}&remove_plus=${remVal}`);
                 const data = await res.json();
                 if (data.status === 'success') {
-                  activeNumber.value = data.number;
+                  triggerToast("নম্বর সফলভাবে বরাদ্দ হয়েছে!");
+                  fetchData(); // ১ ন্যানো-সেকেন্ড গতি রিফ্রেশ
                 } else {
                   alert(data.message);
                 }
@@ -941,18 +1092,8 @@ def index():
             };
 
             const handleCheckOtp = async () => {
-              if (!activeNumber.value || !profile.value) return;
-              try {
-                const res = await fetch('/api/v1/get-otp?number=' + activeNumber.value + '&api_key=' + profile.value.api_key);
-                const data = await res.json();
-                if (data.status === 'success') {
-                  otpResult.value = data;
-                } else if (data.status === 'expired') {
-                  alert('Number expired.');
-                }
-              } catch (err) {
-                alert('Failed to check OTP');
-              }
+              fetchData();
+              triggerToast("ওটিপি সফলভাবে চেক করা হয়েছে!");
             };
 
             const formatTime = (seconds) => {
@@ -961,10 +1102,22 @@ def index():
               return mins + ':' + (secs < 10 ? '0' : '') + secs;
             };
 
+            const formatTimestamp = (isoString) => {
+              if (!isoString) return '';
+              try {
+                const d = new Date(isoString);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              } catch (e) {
+                return '';
+              }
+            };
+
             return {
               user, profile, authEmail, authPassword, isRegistering, authLoading,
-              currentTab, rid, activeNumber, otpResult, loadingNumber, liveLogs, successOtps, timeLeft,
-              windowOrigin, handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, window
+              currentTab, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
+              allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
+              showToast, toastMessage, copyToClipboard, copyFullSms,
+              handleAuth, signOut, handleGetNumber, handleCheckOtp, formatTime, formatTimestamp
             };
           }
         }).mount('#app');
