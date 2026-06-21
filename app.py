@@ -16,7 +16,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
-# ১. সরাসরি আপনার ফায়ারবেস ক্রেডেনশিয়াল কোডের ভেতর যুক্ত করা হলো
+# ১. সরাসরি আপনার ফায়ারবেস ক্রেডেনশিয়াল জেসন
 firebase_creds = {
   "type": "service_account",
   "project_id": "all-panel-support",
@@ -31,14 +31,15 @@ firebase_creds = {
   "universe_domain": "googleapis.com"
 }
 
+# ৩. টাইপো সংশোধন করা হলো (firebase_creds রেফারেন্স করা হয়েছে)
 if not firebase_admin._apps:
-    cred = credentials.Certificate(cred_dict)
+    cred = credentials.Certificate(firebase_creds)
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
-STEX_API_KEY = os.getenv("STEX_API_KEY", "YOUR_STEX_API_KEY")
-STEX_BASE_URL = os.getenv("STEX_BASE_URL", "https://api.2oo9.cloud/MXS47FLFX8U/tness/gpubliic/api")
+STEX_API_KEY = "MWF1Z0QG1DJ"
+STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX8U/tness/gpubliic/api"
 
 # নম্বর সিকিউরিটি মাস্কিং হেল্পার ফাংশন
 def mask_number(number):
@@ -71,7 +72,7 @@ def register():
             'api_key': unique_key,
             'balance': 0.00,
             'otp_rate': 0.50,
-            'id_code': f"MK-{secrets.randbelow(9000) + 1000}",
+            'id_code': f"MINO-{secrets.randbelow(9000) + 1000}",
             'createdAt': firestore.SERVER_TIMESTAMP
         })
 
@@ -91,7 +92,7 @@ def getnum():
         if not api_key or not rid:
             return jsonify({'status': 'error', 'message': 'API Key or RID missing'}), 400
 
-        users_ref = db.collection('profiles').where('api_key', '==', api_key).limit(1).stream()
+        users_ref = db.collection('profiles').where('api_key', '==', apiKey or api_key).limit(1).stream()
         user_doc = next(users_ref, None)
         if not user_doc:
             return jsonify({'status': 'error', 'message': 'Invalid API Key'}), 403
@@ -294,6 +295,7 @@ def success_otp():
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
+    # .replace() ব্যবহারের মাধ্যমে ক্লায়েন্ট সাইড এপিআই কি নিরাপদে ইনজেক্ট করা হচ্ছে
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
@@ -316,7 +318,7 @@ def index():
       <div id="app" v-cloak>
         
         <!-- লগইন / সাইনআপ উইন্ডো -->
-        <div v-if="!user" class="min-h-screen flex items-center justify-center p-4">
+        <div v-if="!user" class="min-h-screen bg-slate-50 flex items-center justify-center p-4">
           <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md w-full space-y-6">
             <div class="text-center space-y-2">
               <span class="px-3 py-1.5 bg-[#0088CC] rounded-2xl flex items-center justify-center text-white font-black text-lg mx-auto shadow-md">MINO</span>
@@ -350,7 +352,7 @@ def index():
         <!-- মেইন প্যানেল ড্যাশবোর্ড -->
         <div v-else class="min-h-screen flex flex-col md:flex-row">
           
-          <!-- সাইডবার (মেনু সহ) -->
+          <!-- সাইডবার -->
           <aside class="w-full md:w-64 bg-white border-r border-slate-200 flex flex-col">
             <div class="p-6 border-b border-slate-100 flex items-center gap-3">
               <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -390,7 +392,7 @@ def index():
           <!-- মেইন কন্টেন্ট এরিয়া -->
           <main class="flex-1 p-6 md:p-8 space-y-6 overflow-y-auto">
             
-            <!-- টপ হেডার (বেল নোটিফিকেশন সহ) -->
+            <!-- টপ হেডার -->
             <header class="flex justify-between items-center border-b border-slate-200 pb-4">
               <div class="flex items-center gap-2">
                 <span class="h-2.5 w-2.5 bg-[#0088CC] rounded-full"></span>
@@ -751,13 +753,14 @@ def index():
       <script>
         const { createApp, ref, onMounted, watch } = Vue;
 
+        // আপনার ফায়ারবেস ক্লায়েন্ট কনফিগারেশন কী-গুলো এখানে বসিয়ে নিন
         const firebaseConfig = {
-          apiKey: "${process.env.NEXT_PUBLIC_FIREBASE_API_KEY || 'YOUR_CLIENT_API_KEY_HERE'}",
-          authDomain: "${process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'YOUR_AUTH_DOMAIN_HERE'}",
+          apiKey: "__API_KEY__",
+          authDomain: "__AUTH_DOMAIN__",
           projectId: "all-panel-support", 
-          storageBucket: "${process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'all-panel-support.appspot.com'}",
-          messagingSenderId: "${process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || ''}",
-          appId: "${process.env.NEXT_PUBLIC_FIREBASE_APP_ID || ''}"
+          storageBucket: "__STORAGE_BUCKET__",
+          messagingSenderId: "__MESSAGING_SENDER_ID__",
+          appId: "__APP_ID__"
         };
 
         firebase.initializeApp(firebaseConfig);
@@ -910,6 +913,14 @@ def index():
     </body>
     </html>
     """
+    # Vercel-এর পরিবেশ ভেরিয়েবল থেকে ক্লায়েন্ট মানগুলো ইনজেক্ট করা হচ্ছে
+    html_content = html_content.replace("__API_KEY__", os.getenv("NEXT_PUBLIC_FIREBASE_API_KEY", ""))
+    html_content = html_content.replace("__AUTH_DOMAIN__", os.getenv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "all-panel-support.firebaseapp.com"))
+    html_content = html_content.replace("__PROJECT_ID__", "all-panel-support")
+    html_content = html_content.replace("__STORAGE_BUCKET__", "all-panel-support.appspot.com")
+    html_content = html_content.replace("__MESSAGING_SENDER_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", ""))
+    html_content = html_content.replace("__APP_ID__", os.getenv("NEXT_PUBLIC_FIREBASE_APP_ID", ""))
+
     return render_template_string(html_content)
 
 if __name__ == '__main__':
