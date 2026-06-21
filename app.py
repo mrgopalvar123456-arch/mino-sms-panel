@@ -30,7 +30,11 @@ CRED_DICT = {
   "universe_domain": "googleapis.com"
 }
 
+# ফায়ারবেজ অ্যাপ ইনিশিয়েলাইজেশন
 if not firebase_admin._apps:
+    # ডাবল এস্কেপড '\\n' টেক্সটকে আসল নিউলাইনে রূপান্তর করার সমাধান
+    CRED_DICT["private_key"] = CRED_DICT["private_key"].replace("\\n", "\n")
+    
     cred = credentials.Certificate(CRED_DICT)
     firebase_admin.initialize_app(cred, {
         'databaseURL': FIREBASE_DB_URL
@@ -41,7 +45,6 @@ if not firebase_admin._apps:
 # =========================================================================
 MEMORY_DB = None
 
-# কান্ট্রি কোড প্রিফিক্স ম্যাপ (কনসোলে দেশের নাম দেখানোর জন্য)
 COUNTRY_PREFIXES = {
     "224": "Guinea",
     "225": "Ivory Coast",
@@ -87,7 +90,7 @@ def firebase_to_list(data):
         lst = []
         for k, v in data.items():
             if isinstance(v, dict):
-                v['id'] = k  # ফায়ারবেজের অনন্য কী (Key) কে অবজেক্টের আইডি হিসেবে ট্র্যাক করা হবে
+                v['id'] = k  
                 lst.append(v)
             else:
                 lst.append(v)
@@ -129,8 +132,6 @@ def load_db():
         }
 
 def save_db(db_data):
-    # গ্লোবাল রুট ওভাররাইট ঠেকাতে এই ফাংশনটি নিষ্ক্রিয় করা হয়েছে।
-    # ডাটাবেজের সব রাইট অপারেশন এখন পারমাণবিক (Atomic) পাথে সরাসরি সম্পন্ন হয়।
     pass
 
 # =========================================================================
@@ -233,7 +234,7 @@ def register():
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
         
-        # ক্লাউডে পারমাণবিক বা এটমিক সেভ (Atomic Write)
+        # ক্লাউডে এটমিক সেভ
         fb_db.reference(f'/users/{uid}').set(user_data)
         
         return jsonify({'status': 'success', 'token': uid, 'user': user_data})
@@ -402,7 +403,7 @@ def getnum():
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
 
-        # এটমিক পুশ (নির্দিষ্ট পাথে ডাটা আপডেট হবে)
+        # এটমিক সেভ
         fb_db.reference(f'/allocated_numbers/{alloc_id}').set(allocation_data)
 
         console_id = "con_" + secrets.token_hex(8)
@@ -479,10 +480,8 @@ def get_user_allocations():
                                 
                                 if not already_logged:
                                     new_balance = float(user.get('balance', 0.0)) + otp_rate
-                                    # ১. ইউজারের ব্যালেন্স ক্লাউডে আপডেট করুন
                                     fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
                                     
-                                    # ২. ওটিপি লগ ক্লাউডে পুশ করুন
                                     otp_id = "otp_" + secrets.token_hex(8)
                                     fb_db.reference(f'/otp_logs/{otp_id}').set({
                                         'userId': user_id,
@@ -494,7 +493,6 @@ def get_user_allocations():
                                         'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     })
 
-                                # ৩. এলোকেশনের স্ট্যাটাস ক্লাউডে আপডেট করুন
                                 alloc_id = alloc.get('id')
                                 if alloc_id:
                                     fb_db.reference(f'/allocated_numbers/{alloc_id}').update({
@@ -503,7 +501,6 @@ def get_user_allocations():
                                         'message': message
                                     })
 
-                                # ৪. লাইভ কনসোল ক্লাউডে পুশ করুন
                                 console_id = "con_" + secrets.token_hex(8)
                                 fb_db.reference(f'/live_console/{console_id}').set({
                                     'type': 'otp_success',
@@ -530,7 +527,6 @@ def get_user_allocations():
                         if alloc_id:
                             fb_db.reference(f'/allocated_numbers/{alloc_id}/status').set('expired')
 
-        # মেমোরিতে থাকা এলোকেশন পুনরায় লোড করুন
         refreshed_db = load_db()
         refreshed_allocs = [a for a in refreshed_db["allocated_numbers"] if a['userId'] == user_id]
         refreshed_allocs.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
@@ -551,7 +547,6 @@ def get_live_console():
                 data = []
                 for hit in hits[:15]:
                     r = hit.get('range', 'N/A')
-                    # ক্লাউড অথবা প্রিফিক্স ম্যাপ থেকে কান্ট্রি নির্ধারণ
                     c_name = hit.get('country') or hit.get('country_name') or get_country_from_range(r)
                     data.append({
                         'range': r,
@@ -1188,7 +1183,7 @@ def index():
 
               userLoaded.value = true; 
 
-              // ২. ওটিপি ও অ্যাক্টিভ নম্বর লাইভ সিঙ্ক
+              // ২. ওটিপি ও্যাক্টিভ নম্বর লাইভ সিঙ্ক
               if (profile.value) {
                 try {
                   const allocRes = await fetch('/api/v1/user-allocations', {
