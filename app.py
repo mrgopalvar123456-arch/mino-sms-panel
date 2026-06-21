@@ -8,7 +8,18 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-# CORS এবং এন্টি-ক্যাশিং পলিসি (ব্রাউজার বা Pydroid-এ ক্যাশিং সমস্যা এড়াতে)
+# =========================================================================
+# CORS এবং এন্টি-ক্যাশিং পলিসি (মোবাইল অ্যাপ ও ব্রাউজারে ব্লকিং এড়াতে)
+# =========================================================================
+@app.before_request
+def handle_options_preflight():
+    if request.method == 'OPTIONS':
+        response = Response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,X-MINO-API-KEY,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        return response
+
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -34,7 +45,7 @@ def parse_iso_datetime(dt_str):
             return datetime.datetime.now(datetime.timezone.utc)
 
 # =========================================================================
-# ভার্সেল ও লোকাল প্ল্যাটফর্মের জন্য ক্র্যাশ-ফ্রি হাইব্রিড ডাটাবেজ (db.json)
+# ডাটাবেজ লোডার ও সেভার
 # =========================================================================
 DB_FILE = "db.json"
 MEMORY_DB = None
@@ -44,7 +55,6 @@ def load_db():
     if MEMORY_DB is not None:
         return MEMORY_DB
     
-    # পদ্ধতি ১: লোকাল ফাইল রিড
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
@@ -53,7 +63,6 @@ def load_db():
         except Exception:
             pass
             
-    # পদ্ধতি ২: ভার্সেল রাইট ডিরেক্টরি রিড
     tmp_path = "/tmp/db.json"
     if os.path.exists(tmp_path):
         try:
@@ -63,7 +72,6 @@ def load_db():
         except Exception:
             pass
 
-    # পদ্ধতি ৩: ইন-মেমোরি ইনিশিয়েলাইজ
     MEMORY_DB = {
         "users": {},
         "allocated_numbers": [],
@@ -75,8 +83,6 @@ def load_db():
 def save_db(db_data):
     global MEMORY_DB
     MEMORY_DB = db_data
-    
-    # লোকাল ডিরেক্টরিতে সেভ করার ট্রাই
     try:
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(db_data, f, indent=4, ensure_ascii=False)
@@ -84,7 +90,6 @@ def save_db(db_data):
     except Exception:
         pass
         
-    # ভার্সেল টেম্পোরারি ফোল্ডারে সেভ করার ট্রাই (ক্র্যাশ প্রতিরোধ করবে)
     try:
         tmp_path = "/tmp/db.json"
         with open(tmp_path, 'w', encoding='utf-8') as f:
@@ -104,7 +109,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# অথেনটিকেশন এবং এপিআই কি ইন্টিগ্রেটেড নিরাপদ পার্সার
+# অথেনটিকেশন মিডলওয়্যার
 def get_current_user(db):
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -113,16 +118,15 @@ def get_current_user(db):
         if user:
             return user
 
-    # অল্টারনে티브 চেক: হেডার বা কুয়েরি কি
     api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
     if api_key:
         for u in db["users"].values():
-            if u['api_key'] == api_key:
+            if u.get('api_key') and u['api_key'] == api_key:
                 return u
     return None
 
 # =========================================================================
-# এপিআইসমূহ
+# রাউট ও এপিআই সমূহ
 # =========================================================================
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
@@ -144,17 +148,16 @@ def register():
                 return jsonify({'status': 'error', 'message': 'Email already registered'}), 400
 
         uid = "usr_" + secrets.token_hex(8)
-        unique_key = 'mino_live_' + secrets.token_hex(16)
 
         db["users"][uid] = {
             'uid': uid,
             'name': name,
             'email': email,
             'password': password,
-            'api_key': unique_key,
+            'api_key': '', # প্রথম রেজিস্ট্রেশনে ফাকা থাকবে
             'balance': 0.00,
-            'otp_rate': 0.40,  # ওটিপি রেট ৪০ পয়সা সেট করা হলো
-            'wallet_address': '', # নতুন ফাকা ওয়ালেট এড্রেস ফিল্ড
+            'otp_rate': 0.40,
+            'wallet_address': '', 
             'id_code': f"MINO-{secrets.randbelow(9000) + 1000}",
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
@@ -194,7 +197,27 @@ def get_me():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# ওয়ালেট এড্রেস সেটআপ করার এপিআই
+# স্থায়ী এপিআই কি জেনারেট করার এপিআই
+@app.route('/api/v1/user/generate-key', methods=['POST'])
+def generate_api_key():
+    try:
+        db = load_db()
+        user = get_current_user(db)
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        
+        user_id = user['uid']
+        # যদি এপিআই কি না থাকে তবেই নতুন তৈরি করবে
+        if not db["users"][user_id].get('api_key'):
+            unique_key = 'mino_live_' + secrets.token_hex(16)
+            db["users"][user_id]['api_key'] = unique_key
+            save_db(db)
+            return jsonify({'status': 'success', 'message': 'API Key generated', 'api_key': unique_key})
+        else:
+            return jsonify({'status': 'success', 'message': 'API Key already exists', 'api_key': db["users"][user_id]['api_key']})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/api/v1/user/update-wallet', methods=['POST'])
 def update_wallet():
     try:
@@ -214,12 +237,19 @@ def update_wallet():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/api/v1/getnum', methods=['GET'])
+@app.route('/api/v1/getnum', methods=['GET', 'POST'])
 def getnum():
     try:
-        rid = request.args.get('rid')
-        national = request.args.get('national', '1')
-        remove_plus = request.args.get('remove_plus', '1')
+        # GET এবং POST উভয় রিকোয়েস্ট থেকে ডাটা রিসিভ করার সাপোর্ট
+        if request.method == 'POST':
+            data = request.json or {}
+            rid = data.get('rid')
+            national = data.get('national', '1')
+            remove_plus = data.get('remove_plus', '1')
+        else:
+            rid = request.args.get('rid')
+            national = request.args.get('national', '1')
+            remove_plus = request.args.get('remove_plus', '1')
 
         db = load_db()
         user = get_current_user(db)
@@ -235,7 +265,7 @@ def getnum():
         stex_data = None
         last_error = "No number available on this range"
 
-        # পদ্ধতি ১: GET Request
+        # গেট রিকোয়েস্ট ট্রাই
         try:
             params = {
                 'rid': clean_rid,
@@ -258,7 +288,7 @@ def getnum():
         except Exception as e:
             print("GET Attempt Failed:", e)
 
-        # পদ্ধতি ২: POST JSON
+        # পোস্ট রিকোয়েস্ট ট্রাই
         if not stex_data:
             try:
                 payload = {
@@ -468,7 +498,7 @@ def success_otp():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# ফ্রন্টএন্ড UI পরিবেশন
+# ফ্রন্টএন্ড UI
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -479,9 +509,7 @@ def index():
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>MINO SMS PANEL</title>
-      <!-- Tailwind CSS Play CDN (Arbitrary v3+ values সাপোর্ট করার জন্য) -->
       <script src="https://cdn.tailwindcss.com"></script>
-      <!-- Vue 3 Global Production CDN (সঠিক .min.js ফাইল লোড করা হলো) -->
       <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.3.4/vue.global.prod.min.js"></script>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
       <style>
@@ -493,7 +521,7 @@ def index():
       
       <div id="app">
 
-        <!-- স্মার্ট লোডিং স্ক্রিন প্লেসহোল্ডার (সাদা পেজ হওয়ার সমাধান) -->
+        <!-- লোডিং স্ক্রিন -->
         <div v-if="!userLoaded" class="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center space-y-4 z-[99999]">
           <div class="h-12 w-12 border-4 border-[#0088CC] border-t-transparent rounded-full animate-spin"></div>
           <p class="text-xs font-black text-[#0088CC] uppercase tracking-widest animate-pulse">MINO PANEL LOADING...</p>
@@ -545,7 +573,7 @@ def index():
           <!-- মেইন প্যানেল ড্যাশবোর্ড -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- ডেস্কটপ সাইডবার -->
+            <!-- সাইডবার -->
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -609,7 +637,6 @@ def index():
             <!-- মেইন কন্টেন্ট এরিয়া -->
             <main class="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto pb-24 md:pb-8">
               
-              <!-- টপ হেডার -->
               <header class="flex justify-between items-center border-b border-slate-200 pb-4">
                 <div class="flex items-center gap-2">
                   <span class="h-2.5 w-2.5 bg-[#0088CC] rounded-full"></span>
@@ -639,7 +666,6 @@ def index():
                       <div class="bg-amber-50 h-10 w-10 rounded-xl flex items-center justify-center text-amber-600 shrink-0"><i class="fa-solid fa-tag text-md"></i></div>
                       <div>
                         <p class="text-[10px] text-slate-400 font-bold">ওটিপি রেট</p>
-                        <!-- ওটিপি রেট ডাইনামিকালি ৪০ পয়সা দেখাবে -->
                         <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.otp_rate : 0.40).toFixed(2) }}</h4>
                       </div>
                     </div>
@@ -655,7 +681,6 @@ def index():
                   </div>
                 </div>
 
-                <!-- ওটিপি লগ লিস্ট -->
                 <div class="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
                   <div class="p-4 border-b border-slate-100 bg-slate-50/50">
                     <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">সর্বশেষ ওটিপি রিপোর্ট</h4>
@@ -685,7 +710,6 @@ def index():
               <!-- ==================== সেকশন ২: নাম্বার নিন ==================== -->
               <div v-if="currentTab === 'get-number'" class="space-y-6">
                 
-                <!-- Range Box UI -->
                 <div class="bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div class="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                     <i class="fa-solid fa-mobile-button text-[#0088CC]"></i> আপনার কাঙ্ক্ষিত রেঞ্জ (Your Range)
@@ -707,10 +731,8 @@ def index():
                   </button>
                 </div>
 
-                <!-- সক্রিয় নম্বরের তালিকা -->
                 <div class="space-y-4">
                   
-                  <!-- লাইভ সার্চ বার ও পেজিনেশন -->
                   <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 px-2">
                     <input type="text" v-model="searchQuery" placeholder="নম্বর বা দেশ দিয়ে খুঁজুন..." class="w-full sm:w-64 p-3 bg-white border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC]" />
                     <div class="flex gap-2 text-[10px] font-bold text-slate-400 items-center">
@@ -720,7 +742,6 @@ def index():
                     </div>
                   </div>
 
-                  <!-- নম্বর আইটেমগুলির তালিকা (Screenshot 5 লেআউট) -->
                   <div v-if="paginatedAllocations.length === 0" class="bg-white p-12 text-center text-slate-400 border rounded-3xl font-semibold text-xs">
                     কোনো নম্বর তালিকা পাওয়া যায়নি।
                   </div>
@@ -728,7 +749,6 @@ def index():
                   <div v-else class="space-y-3">
                     <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white p-4 rounded-3xl border border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition hover:shadow-xs hover:border-slate-300">
                       
-                      <!-- Left: Number & Status Badges -->
                       <div class="space-y-1.5 shrink-0">
                         <div @click="copyToClipboard(alloc.number)" class="flex items-center gap-1.5 cursor-pointer hover:opacity-80 active:scale-95 transition">
                           <span class="font-black text-slate-800 text-sm tracking-wider">{{ alloc.number }}</span>
@@ -748,15 +768,12 @@ def index():
                         </div>
                       </div>
 
-                      <!-- Middle Left: Dynamic OTP Box -->
                       <div class="flex-1 min-w-0 w-full sm:w-auto">
                         
-                        <!-- অপেক্ষমান স্ট্যাটাস -->
                         <div v-if="alloc.status === 'active'" class="text-xs text-slate-400 font-black italic animate-pulse flex items-center gap-1">
                           <i class="fa-solid fa-spinner animate-spin"></i> Waiting for incoming SMS...
                         </div>
                         
-                        <!-- ওটিপি সফল বক্স -->
                         <div v-else-if="alloc.status === 'completed'" @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-200 p-2.5 rounded-2xl text-emerald-800 text-xs cursor-pointer active:scale-95 transition-all flex items-center justify-between gap-3 group animate-pulse">
                           <div class="min-w-0">
                             <span class="text-[9px] text-emerald-600 font-bold uppercase tracking-wider block">OTP CODE (CLICK TO COPY FULL SMS)</span>
@@ -769,20 +786,17 @@ def index():
                           </div>
                         </div>
                         
-                        <!-- এক্সপায়ারড নম্বর -->
                         <div v-else class="text-xs text-rose-500 font-bold">
                           Banned / Closed (18 mins over)
                         </div>
 
                       </div>
 
-                      <!-- Middle Right: Country/Operator -->
                       <div class="text-left sm:text-right shrink-0">
                         <p class="font-black text-slate-700 text-xs uppercase">{{ alloc.country }}</p>
                         <p class="text-[9px] text-slate-400 font-black uppercase mt-0.5">{{ alloc.operator }}</p>
                       </div>
 
-                      <!-- Right Side: Expiry / Expiration Countdown -->
                       <div class="shrink-0 w-full sm:w-auto flex justify-end">
                         <div class="bg-slate-50 border border-slate-200 text-slate-600 text-[11px] font-black py-1 px-3 rounded-xl min-w-[70px] text-center tracking-wider">
                           {{ alloc.status === 'active' && alloc.timeLeft > 0 ? formatTime(alloc.timeLeft) : '--:--' }}
@@ -829,10 +843,9 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== সেকশন ৪: পেমেন্ট (নিরাপদ ওয়ালেট এডিটর সংযুক্ত) ==================== -->
+              <!-- ==================== সেকশন ৪: পেমেন্ট ==================== -->
               <div v-if="currentTab === 'payment'" class="space-y-6">
                 
-                <!-- ডাইনামিক ওয়ালেট কার্ড -->
                 <div class="bg-white p-5 rounded-3xl border border-[#0088CC]/20 shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-800 flex items-center gap-2"><i class="fa-solid fa-wallet text-[#0088CC]"></i> ওয়ালেট এড্রেস সেট করুন (Binance / TRC20)</h3>
                   
@@ -844,7 +857,6 @@ def index():
                     <span class="bg-[#0088CC] text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm"><i class="fa-brands fa-bitcoin"></i> TRC20</span>
                   </div>
 
-                  <!-- ওয়ালেট আপডেট ফর্ম -->
                   <div class="flex flex-col sm:flex-row gap-2 pt-2">
                     <input type="text" v-model="walletAddressInput" placeholder="আপনার Binance Pay ID বা TRC20 এড্রেস লিখুন" class="flex-1 p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold outline-none focus:border-[#0088CC] transition" />
                     <button @click="handleUpdateWallet" :disabled="walletLoading" class="bg-[#0088CC] hover:bg-[#0077B5] text-white font-black px-5 py-3.5 rounded-2xl text-xs tracking-wider transition active:scale-95 disabled:bg-slate-300 shrink-0">
@@ -876,9 +888,32 @@ def index():
 
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3 text-xs">
                   <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">প্রোফাইল ইনফো</h3>
-                  <div class="space-y-2 font-semibold">
+                  <div class="space-y-4 font-semibold">
                     <p class="text-slate-500">ইউজার আইডি: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
-                    <p class="text-slate-500">এপিআই কি: <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-1.5 py-0.5 rounded break-all select-all ml-1">{{ profile ? profile.api_key : 'N/A' }}</span></p>
+                    
+                    <!-- এপিআই কি সেকশন -->
+                    <div class="space-y-2">
+                      <p class="text-slate-500">এপিআই কি:</p>
+                      
+                      <!-- এপিআই কি অলরেডি থাকলে দেখাবে -->
+                      <div v-if="profile && profile.api_key" class="flex flex-col gap-2">
+                        <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all">
+                          {{ profile.api_key }}
+                        </span>
+                        <button @click="copyToClipboard(profile.api_key)" class="w-max bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition">
+                          কপি করুন <i class="fa-solid fa-copy ml-1"></i>
+                        </button>
+                      </div>
+                      
+                      <!-- এপিআই কি না থাকলে জেনারেট বাটন দেখাবে -->
+                      <div v-else class="space-y-2">
+                        <p class="text-amber-600 text-[10px] font-bold"><i class="fa-solid fa-triangle-exclamation"></i> কোনো এপিআই কি জেনারেট করা নেই। নিচের বাটনে ক্লিক করে স্থায়ী এপিআই কি তৈরি করুন।</p>
+                        <button @click="handleGenerateApiKey" :disabled="apiGenLoading" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2.5 rounded-2xl text-[11px] tracking-wider transition active:scale-95 disabled:bg-slate-300">
+                          {{ apiGenLoading ? 'তৈরি হচ্ছে...' : 'GENERATE API KEY' }}
+                        </button>
+                      </div>
+                    </div>
+
                   </div>
                 </div>
               </div>
@@ -894,7 +929,7 @@ def index():
 
         createApp({
           setup() {
-            const userLoaded = ref(false); // সাদা স্ক্রিন প্রতিরোধক লোডিং স্টেট
+            const userLoaded = ref(false); 
             const user = ref(null);
             const profile = ref(null);
             const authName = ref('');
@@ -917,26 +952,20 @@ def index():
             const liveLogs = ref([]);
             const successOtps = ref([]);
             
-            // ওয়ালেট আপডেট ভেরিয়েবল
             const walletAddressInput = ref('');
             const walletLoading = ref(false);
+            const apiGenLoading = ref(false);
 
-            // সার্চ এবং ফিল্টারিং
             const searchQuery = ref('');
 
-            // নম্বর লিস্ট এবং পেজিনেশন কনফিগারেশন (২০০ টি প্রতি পেজে)
             const allocations = ref([]);
             const currentPage = ref(1);
             const itemsPerPage = 200;
 
-            // কপি ক্লিপবোর্ড টোস্ট
             const showToast = ref(false);
             const toastMessage = ref('');
-            
-            // পোলিং টাইমার ডিক্লেয়ার করা হলো (যাতে এরর না আসে)
-            let pollingTimer = null; 
+            let pollingTimer = null;
 
-            // নোটিফিকেশন সাউন্ড প্লেয়ার (Beep Sound)
             const playBeep = () => {
               try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -974,7 +1003,6 @@ def index():
               triggerToast("সম্পূর্ণ ওটিপি মেসেজ কপি হয়েছে! ✅");
             };
 
-            // ডাইনামিক ফিল্টারকৃত নম্বর তালিকা
             const filteredAllocations = computed(() => {
               if (!allocations.value) return [];
               const q = searchQuery.value.toLowerCase().trim();
@@ -986,7 +1014,6 @@ def index():
               );
             });
 
-            // পেজিনেশন লজিক
             const paginatedAllocations = computed(() => {
               if (!filteredAllocations.value) return [];
               const start = (currentPage.value - 1) * itemsPerPage;
@@ -1006,7 +1033,6 @@ def index():
               if (currentPage.value < totalPages.value) currentPage.value++;
             };
 
-            // ১৮ মিনিট চেক
             const updateTimers = () => {
               if (!allocations.value) return;
               allocations.value.forEach(alloc => {
@@ -1024,10 +1050,11 @@ def index():
               });
             };
 
+            // ৩ সেকেন্ড পর পর পোলিং করা হবে, যাতে Vercel সহজে ক্র্যাশ বা ওভারলোড না হয়
             const startPolling = () => {
               stopPolling();
               fetchData();
-              pollingTimer = setInterval(fetchData, 500); // ৫০০ মিলি-সেকেন্ড (১০ গুণ বেশি স্পিড)
+              pollingTimer = setInterval(fetchData, 3000); 
             };
 
             const stopPolling = () => {
@@ -1049,6 +1076,14 @@ def index():
                 const profileRes = await fetch('/api/v1/auth/me', {
                   headers: { 'Authorization': `Bearer ${token}` }
                 });
+                
+                if (profileRes.status === 401) {
+                  // এপিআই যদি আসলেই Unauthorized বলে তবেই কেবল লগআউট হবে, নেটওয়ার্কের সাধারণ এরর এ লগআউট হবে না
+                  signOut();
+                  userLoaded.value = true;
+                  return;
+                }
+
                 const profileData = await profileRes.json();
                 if (profileData.status === 'success') {
                   user.value = profileData.user;
@@ -1056,14 +1091,12 @@ def index():
                   if (profileData.user.wallet_address && !walletAddressInput.value) {
                     walletAddressInput.value = profileData.user.wallet_address;
                   }
-                } else {
-                  signOut();
-                  userLoaded.value = true;
-                  return;
                 }
-              } catch (e) {}
+              } catch (e) {
+                console.log("Profile Fetch Error (Ignored for safety):", e);
+              }
 
-              userLoaded.value = true; // লোডিং সমাপ্ত
+              userLoaded.value = true; 
 
               // ২. ওটিপি ও অ্যাক্টিভ নম্বর লাইভ সিঙ্ক
               if (profile.value) {
@@ -1071,7 +1104,7 @@ def index():
                   const allocRes = await fetch('/api/v1/user-allocations', {
                     headers: { 
                       'Authorization': `Bearer ${token}`,
-                      'X-MINO-API-KEY': profile.value.api_key 
+                      'X-MINO-API-KEY': profile.value.api_key || ''
                     }
                   });
                   const allocData = await allocRes.json();
@@ -1081,7 +1114,6 @@ def index():
                     allocations.value = allocData.allocations;
                     updateTimers();
 
-                    // সাউন্ড সংকেত
                     const newCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
                     if (newCompletedCount > prevCompletedCount && prevCompletedCount > 0) {
                       playBeep();
@@ -1103,7 +1135,7 @@ def index():
               // ৪. ড্যাশবোর্ড ওটিপি রিপোর্ট ফেচ
               if (profile.value) {
                 try {
-                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + profile.value.api_key);
+                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''));
                   const otpData = await otpRes.json();
                   if (otpData.status === 'success') {
                     successOtps.value = otpData.data;
@@ -1112,7 +1144,7 @@ def index():
               }
             };
 
-            // ওয়ালেট সেভ করার রিকোয়েস্ট হ্যান্ডেলার
+            // ওয়ালেট সেভ করার হ্যান্ডেলার
             const handleUpdateWallet = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token || !walletAddressInput.value.trim()) return;
@@ -1138,6 +1170,32 @@ def index():
                 alert("ওয়ালেট আপডেট করা সম্ভব হয়নি।");
               }
               walletLoading.value = false;
+            };
+
+            // প্রোফাইল থেকে এপিআই কী জেনারেট করার হ্যান্ডেলার
+            const handleGenerateApiKey = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) return;
+              
+              apiGenLoading.value = true;
+              try {
+                const res = await fetch('/api/v1/user/generate-key', {
+                  method: 'POST',
+                  headers: { 
+                    'Authorization': `Bearer ${token}`
+                  }
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("এপিআই কি সফলভাবে জেনারেট হয়েছে! ✅");
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("এপিআই কি জেনারেট করা সম্ভব হয়নি।");
+              }
+              apiGenLoading.value = false;
             };
 
             onMounted(() => {
@@ -1207,7 +1265,7 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("নম্বর সফলভাবে বরাদ্দ হয়েছে!");
-                  fetchData(); // ১ ন্যানো-সেকেন্ড গতি রিফ্রেশ
+                  fetchData(); 
                 } else {
                   alert(data.message);
                 }
@@ -1238,7 +1296,8 @@ def index():
               currentTab, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
               allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
-              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp
+              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
+              apiGenLoading, handleGenerateApiKey
             };
           }
         }).mount('#app');
