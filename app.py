@@ -92,7 +92,7 @@ def after_request(response):
     return response
 
 # =========================================================================
-# Database Handlers (Optimized for maximum speed)
+# Database Handlers (Optimized Queries)
 # =========================================================================
 COUNTRY_PREFIXES = {
     "224": "Guinea", "225": "Ivory Coast", "236": "Central African Republic",
@@ -151,7 +151,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# Highly Optimized Authentication Middleware
+# Highly Optimized Authentication Middleware with Strict Verification Protection
 def get_current_user_optimized():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -345,11 +345,16 @@ def request_withdrawal():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# Real-Time Leaderboard API (Supports 25 Hours, Weekly, and Lifetime stats)
+# Real-Time Leaderboard API (Secured - Returns 402 if Unauthorized)
 # =========================================================================
 @app.route('/api/v1/leaderboard', methods=['GET'])
 def get_leaderboard():
     try:
+        # Strict Verification Check to Prevent Data Theft
+        user = get_current_user_optimized()
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Invalid API Key or Unauthorized access.'}), 402
+
         users_dict = fb_db.reference('/users').get() or {}
         otp_logs_dict = fb_db.reference('/otp_logs').get() or {}
         
@@ -435,7 +440,7 @@ def get_leaderboard():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# Public API Endpoints (GET & POST - Mapped with 402 Error Codes)
+# Public API Endpoints (GET & POST - Secured with 402 Error Code blocks)
 # =========================================================================
 
 # 1. Booking API
@@ -579,11 +584,16 @@ def success_otp():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 4. Live Console API
+# 4. Live Console API (Secured - Returns 402 if Unauthorized)
 @app.route('/@public/api/console', methods=['GET', 'POST'])
 @app.route('/api/v1/live-console', methods=['GET', 'POST'])
 def get_live_console():
     try:
+        # Strict Verification Check to Prevent Data Theft
+        user = get_current_user_optimized()
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Invalid API Key or Unauthorized access.'}), 402
+
         res = requests.get(f"{STEX_BASE_URL}/console", headers={'mauthapi': STEX_API_KEY}, timeout=4)
         if res.status_code == 200:
             stex_data = res.json()
@@ -591,16 +601,19 @@ def get_live_console():
             if meta.get('status') == 'ok' or meta.get('code') == 200:
                 hits = stex_data.get('data', {}).get('hits', [])
                 data = []
-                for hit in hits[:15]:
-                    r = hit.get('range', 'N/A')
-                    c_name = hit.get('country') or hit.get('country_name') or get_country_from_range(r)
-                    data.append({
-                        'range': r,
-                        'service': hit.get('sid', 'Global'),
-                        'message': hit.get('message', ''),
-                        'time': hit.get('time', 0),
-                        'country': c_name
-                    })
+                for hit in hits:
+                    sid = hit.get('sid', 'Global')
+                    last_at = hit.get('last_at', 0)
+                    ranges = hit.get('ranges', [])
+                    for r in ranges:
+                        c_name = get_country_from_range(r)
+                        data.append({
+                            'range': r,
+                            'service': sid,
+                            'message': f"Signal intercepted on range {r} for {sid}",
+                            'time': last_at,
+                            'country': c_name
+                        })
                 return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         print("STEX Console API Error:", e)
@@ -1006,7 +1019,7 @@ def index():
           <!-- Main Panel Dashboard Interface -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- Desktop Sidebar Navigation -->
+            <!-- Desktop Sidebar Navigation (Light theme styled buttons) -->
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -1023,6 +1036,9 @@ def index():
                 <button @click="currentTab = 'console'" :class="currentTab === 'console' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                   <i class="fa-solid fa-terminal"></i> Console
                 </button>
+                <button @click="currentTab = 'leaderboard'" :class="currentTab === 'leaderboard' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                  <i class="fa-solid fa-trophy"></i> Leaderboard
+                </button>
                 <button @click="currentTab = 'payment'" :class="currentTab === 'payment' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'text-slate-600 hover:bg-slate-50'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                   <i class="fa-solid fa-wallet"></i> Payment & Withdraw
                 </button>
@@ -1031,7 +1047,7 @@ def index():
                 </button>
               </nav>
 
-              <!-- Telegram support embedded into sidebar -->
+              <!-- Telegram support helpdesk channel button -->
               <div class="p-4 border-t border-slate-100 bg-slate-50/50 space-y-3">
                 <a href="https://t.me/MinoXSupport0" target="_blank" class="flex items-center gap-2 text-xs font-bold text-[#0088CC] hover:underline">
                   <i class="fa-brands fa-telegram text-base"></i> Telegram Support
@@ -1050,7 +1066,7 @@ def index():
               </div>
             </aside>
 
-            <!-- Light Theme Slide-out Mobile Menu Drawer -->
+            <!-- Light Theme Slide-out Mobile Menu Drawer (Light mode UI button channels) -->
             <transition enter-active-class="transition ease-out duration-300" enter-from-class="-translate-x-full" enter-to-class="translate-x-0" leave-active-class="transition ease-in duration-200" leave-from-class="translate-x-0" leave-to-class="-translate-x-full">
               <aside v-if="mobileMenuOpen" class="fixed inset-y-0 left-0 w-64 bg-white text-slate-700 flex flex-col z-50 md:hidden shadow-2xl border-r border-slate-100">
                 <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
@@ -1070,6 +1086,9 @@ def index():
                   </button>
                   <button @click="navigateMobile('console')" :class="currentTab === 'console' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-terminal"></i> Console
+                  </button>
+                  <button @click="navigateMobile('leaderboard')" :class="currentTab === 'leaderboard' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                    <i class="fa-solid fa-trophy"></i> Leaderboard
                   </button>
                   <button @click="navigateMobile('payment')" :class="currentTab === 'payment' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-wallet"></i> Payment & Withdraw
@@ -1150,7 +1169,7 @@ def index():
                   </div>
                 </div>
 
-                <!-- SUMMARY CARD: Realtime dynamic aggregation of user activity numbers -->
+                <!-- SUMMARY CARD: Realtime dynamic aggregation of user requested numbers -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                     <i class="fa-solid fa-square-poll-vertical text-[#0088CC]"></i> WORK SUMMARY
@@ -1171,39 +1190,6 @@ def index():
                     <div class="bg-rose-50/50 p-3 rounded-xl border border-rose-100">
                       <span class="text-[9px] text-rose-600 font-bold block uppercase">Failed / Expired</span>
                       <span class="text-base font-black text-rose-600 block mt-1">{{ allocations.filter(a => a.status === 'expired').length }}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- LEADERBOARD COMPONENT: Automatically resets every 25 Hours -->
-                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
-                  <div class="flex justify-between items-center border-b pb-2">
-                    <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <i class="fa-solid fa-trophy text-amber-500"></i> TOP WORKERS LEADERBOARD
-                    </h3>
-                    <span class="text-[9px] text-slate-400 font-bold uppercase tracking-tight italic bg-slate-50 px-2 py-1 rounded">
-                      <i class="fa-regular fa-clock text-[8px]"></i> Restarts every 25 Hours
-                    </span>
-                  </div>
-
-                  <div class="flex gap-2 text-[10px] font-extrabold">
-                    <button @click="leaderboardTab = 'today'" :class="leaderboardTab === 'today' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-3 py-1.5 rounded-lg transition">Today</button>
-                    <button @click="leaderboardTab = 'weekly'" :class="leaderboardTab === 'weekly' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-3 py-1.5 rounded-lg transition">Weekend</button>
-                    <button @click="leaderboardTab = 'lifetime'" :class="leaderboardTab === 'lifetime' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-3 py-1.5 rounded-lg transition">Lifetime</button>
-                  </div>
-
-                  <div class="space-y-2 mt-2">
-                    <div v-for="(worker, idx) in leaderboardData[leaderboardTab]" :key="idx" class="flex justify-between items-center bg-slate-50/50 p-2.5 rounded-xl border border-slate-100 text-xs">
-                      <div class="flex items-center gap-2">
-                        <span class="font-black text-[10px] h-5 w-5 rounded-full flex items-center justify-center shrink-0" :class="idx === 0 ? 'bg-amber-100 text-amber-700' : idx === 1 ? 'bg-slate-200 text-slate-700' : 'bg-orange-100 text-orange-700'">
-                          #{{ idx + 1 }}
-                        </span>
-                        <div>
-                          <span class="font-bold text-slate-800">{{ worker.name }}</span>
-                          <span class="text-[9px] text-slate-400 block font-semibold">{{ worker.id_code }}</span>
-                        </div>
-                      </div>
-                      <span class="font-black text-[#0088CC]">{{ worker.count }} OTPs</span>
                     </div>
                   </div>
                 </div>
@@ -1284,7 +1270,7 @@ def index():
                     No allocated numbers found.
                   </div>
 
-                  <!-- Segmented Numbers View (Strictly single line horizontal grids layout) -->
+                  <!-- Segmented Numbers View -->
                   <div v-else class="space-y-3">
                     <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-sm hover:border-slate-300 transition">
                       <div class="grid grid-cols-3 divide-x divide-slate-150 items-stretch min-h-[90px]">
@@ -1358,40 +1344,89 @@ def index():
 
               </div>
 
-              <!-- ==================== SECTION 3: Console ==================== -->
+              <!-- ==================== SECTION 3: Console (Up to 150 items limit and Top-sorting animation) ==================== -->
               <div v-if="currentTab === 'console'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
                   <div>
                     <div class="flex items-center gap-2">
-                      <i class="fa-solid fa-satellite-dish text-[#0088CC] text-lg animate-pulse"></i>
-                      <h2 class="text-md font-black text-slate-900">GLOBAL INTERCEPT RADAR</h2>
+                      <i class="fa-solid fa-terminal text-[#0088CC] text-lg"></i>
+                      <h2 class="text-md font-black text-slate-900">Console</h2>
                     </div>
-                    <p class="text-[10px] text-slate-400 font-medium mt-1">Click on any intercepted signal card to copy its range.</p>
+                    <p class="text-[10px] text-slate-400 font-medium mt-1">Intercept stream is automatically limited to 150 items. Clicking range logs will copy them instantly.</p>
                   </div>
+                  <span class="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-3 py-1.5 rounded-full select-none">
+                    {{ liveLogs.length }} / 150 Active Logs
+                  </span>
                 </div>
 
                 <div class="space-y-3">
                   <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl text-xs">Initializing global signal tracker...</div>
                   
-                  <div v-else v-for="log in liveLogs" :key="log.time" @click="copyToClipboard(log.range)" class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition active:scale-[0.99] space-y-2">
-                    <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
-                      <span class="text-sm font-black text-[#0088CC] uppercase tracking-wide">
-                        {{ log.service }}
-                      </span>
-                      <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-                        {{ log.country }} (Click to Copy)
-                      </span>
-                    </div>
-                    <div class="space-y-1">
-                      <p class="font-mono font-bold text-slate-800 text-[11px] leading-tight break-words">
-                        {{ log.message }}
-                      </p>
+                  <!-- Transition group for unshifting top insertion animations -->
+                  <div v-else class="space-y-2.5">
+                    <div v-for="log in liveLogs" :key="log.range + '_' + log.service + '_' + log.time" @click="copyToClipboard(log.range)" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition duration-300 active:scale-[0.99] space-y-2">
+                      <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
+                        <span class="text-xs font-black text-[#0088CC] uppercase tracking-wide">
+                          {{ log.service }}
+                        </span>
+                        <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
+                          {{ log.country }} (Click to Copy)
+                        </span>
+                      </div>
+                      <div class="space-y-1">
+                        <p class="font-mono font-bold text-slate-800 text-[11px] leading-tight break-words">
+                          {{ log.message }}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- ==================== SECTION 4: Payment & Withdraw ==================== -->
+              <!-- ==================== SECTION 4: Leaderboard (Dedicated secure tab) ==================== -->
+              <div v-if="currentTab === 'leaderboard'" class="space-y-6">
+                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+                  <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div>
+                      <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-trophy text-amber-500 text-lg"></i>
+                        <h2 class="text-md font-black text-slate-900">TOP WORKERS LEADERBOARD</h2>
+                      </div>
+                      <p class="text-[10px] text-slate-400 font-medium mt-1">Real-time work ranks based on completed OTP codes verified securely.</p>
+                    </div>
+                    <span class="text-[10px] text-slate-500 font-bold uppercase tracking-tight italic bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-full shrink-0 flex items-center gap-1.5">
+                      <i class="fa-regular fa-clock"></i> Restarts every 25 Hours
+                    </span>
+                  </div>
+
+                  <!-- Leaderboard Filters Toggle -->
+                  <div class="flex gap-2 text-xs font-black mt-5">
+                    <button @click="leaderboardTab = 'today'" :class="leaderboardTab === 'today' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Today (25H)</button>
+                    <button @click="leaderboardTab = 'weekly'" :class="leaderboardTab === 'weekly' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Weekend</button>
+                    <button @click="leaderboardTab = 'lifetime'" :class="leaderboardTab === 'lifetime' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Lifetime</button>
+                  </div>
+
+                  <!-- Rankings list -->
+                  <div class="space-y-3 mt-4">
+                    <div v-for="(worker, idx) in leaderboardData[leaderboardTab]" :key="idx" class="flex justify-between items-center bg-slate-50/50 p-4 rounded-2xl border border-slate-200/60 text-xs">
+                      <div class="flex items-center gap-3">
+                        <span class="font-black text-xs h-7 w-7 rounded-full flex items-center justify-center shrink-0 border shadow-xs" :class="idx === 0 ? 'bg-amber-100 text-amber-700 border-amber-200' : idx === 1 ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-orange-100 text-orange-700 border-orange-200'">
+                          #{{ idx + 1 }}
+                        </span>
+                        <div>
+                          <span class="font-extrabold text-slate-800 text-sm block">{{ worker.name }}</span>
+                          <span class="text-[10px] text-slate-400 block font-semibold">{{ worker.id_code }}</span>
+                        </div>
+                      </div>
+                      <span class="font-black text-[#0088CC] text-sm bg-white border border-slate-200 px-3 py-1 rounded-full shadow-2xs">
+                        {{ worker.count }} Successful OTPs
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==================== SECTION 5: Payment & Withdraw ==================== -->
               <div v-if="currentTab === 'payment'" class="space-y-6">
                 
                 <div class="bg-white p-5 rounded-3xl border border-[#0088CC]/20 shadow-xs space-y-4">
@@ -1453,7 +1488,7 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== SECTION 5: Profile Details ==================== -->
+              <!-- ==================== SECTION 6: Profile Details ==================== -->
               <div v-if="currentTab === 'profile'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex items-center gap-4">
                   <div class="h-14 w-14 bg-[#0088CC] text-white font-black text-sm rounded-full flex items-center justify-center">
@@ -1503,7 +1538,7 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== SECTION 6: API Docs & Test Lab ==================== -->
+              <!-- ==================== SECTION 7: API Docs & Test Lab ==================== -->
               <div v-if="currentTab === 'api-docs'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div class="flex items-center gap-2">
@@ -1642,7 +1677,7 @@ def index():
             const toastMessage = ref('');
             let pollingTimer = null;
 
-            // Live Test Lab Variables
+            // Live Test Lab Variables (Interactive dropdown mapping added for testing all 4 APIs)
             const selectedTestApi = ref('getnum');
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
@@ -1759,6 +1794,28 @@ def index():
               }
             };
 
+            // Merging logic with 150 items maximum upper limit limit
+            const mergeLogs = (newLogs) => {
+              newLogs.forEach(newLog => {
+                const key = `${newLog.range}_${newLog.service}_${newLog.time}`;
+                const exists = liveLogs.value.some(existingLog => 
+                  `${existingLog.range}_${existingLog.service}_${existingLog.time}` === key
+                );
+                if (!exists) {
+                  // New elements are unshifted sequentially to appear gracefully on top of list
+                  liveLogs.value.unshift(newLog);
+                }
+              });
+
+              // Sorting by time stamp descending so newest logs reside on top
+              liveLogs.value.sort((a, b) => b.time - a.time);
+
+              // Strict truncation of older indices when total elements exceed exactly 150
+              if (liveLogs.value.length > 150) {
+                liveLogs.value = liveLogs.value.slice(0, 150);
+              }
+            };
+
             const fetchData = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token) {
@@ -1818,19 +1875,23 @@ def index():
                 } catch (e) {}
               }
 
-              // 3. Fetch Signal Radar Logs
+              // 3. Fetch Signal Tracker Logs (Bearer Token Mapped to secure endpoint calls)
               try {
-                const consoleRes = await fetch('/api/v1/live-console');
+                const consoleRes = await fetch('/api/v1/live-console', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
                 const consoleData = await consoleRes.json();
                 if (consoleData.status === 'success') {
-                  liveLogs.value = consoleData.data;
+                  mergeLogs(consoleData.data);
                 }
               } catch (e) {}
 
               // 4. Fetch Dashboard OTP Report data
               if (profile.value) {
                 try {
-                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''));
+                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''), {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                  });
                   const otpData = await otpRes.json();
                   if (otpData.status === 'success') {
                     successOtps.value = otpData.data;
@@ -1838,9 +1899,11 @@ def index():
                 } catch (e) {}
               }
 
-              // 5. Fetch Leaderboard Ratings
+              // 5. Fetch Leaderboard Ratings (Bearer Token Mapped to secure endpoint calls)
               try {
-                const boardRes = await fetch('/api/v1/leaderboard');
+                const boardRes = await fetch('/api/v1/leaderboard', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
                 const boardData = await boardRes.json();
                 if (boardData.status === 'success') {
                   leaderboardData.value.today = boardData.today;
@@ -1931,6 +1994,7 @@ def index():
               }
             };
 
+            // Dynamic test script targeting selected APIs dynamically
             const runLiveApiTest = async () => {
               if (!profile.value?.api_key) {
                 alert("Please generate an API Key first.");
