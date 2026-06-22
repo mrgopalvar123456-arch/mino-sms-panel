@@ -1895,7 +1895,7 @@ def index():
                         <h4 class="text-xs font-black text-slate-800">1. Number Booking Endpoint</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
-                        {{ apiBaseUrl }}/@public/api/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
+                        {{ apiBaseUrl }}/@public/api/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
                       </div>
                       <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
                       <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
@@ -1926,6 +1926,75 @@ def index():
     "balance": 6.65,
     "otp_rate": 0.40
   }
+}</pre>
+                    </div>
+
+                    <!-- GET Success logs -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <h4 class="text-xs font-black text-slate-800">3. Success OTP logs</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
+                        {{ apiBaseUrl }}/@public/api/success-otp?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
+                      </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "data": [
+    {
+      "number": "+2250789538803",
+      "service": "facebook",
+      "otp_code": "972450",
+      "message": "Your Facebook code is 972450",
+      "revenue_earned": 0.40,
+      "created_at": "2026-06-22T10:10:05.123Z"
+    }
+  ]
+}</pre>
+                    </div>
+
+                    <!-- GET Console tracks -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <h4 class="text-xs font-black text-slate-800">4. Console Tracker signal stream</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
+                        {{ apiBaseUrl }}/@public/api/console?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
+                      </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "data": [
+    {
+      "range": "2250789XXX",
+      "service": "FACEBOOK",
+      "message": "Signal intercepted on range 2250789XXX for FACEBOOK",
+      "time": 1782099243663,
+      "country": "Ivory Coast"
+    }
+  ]
+}</pre>
+                    </div>
+
+                    <!-- GET/POST Check Status -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET/POST</span>
+                        <h4 class="text-xs font-black text-slate-800">5. Check Number Status (Bot Friendly API)</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
+                        {{ apiBaseUrl }}/@public/api/check?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&number=TARGET_NUMBER
+                      </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "number": "+2250789538803",
+  "allocation_status": "completed",
+  "otp_code": "972450",
+  "full_sms": "Your Facebook code is 972450",
+  "created_at": "2026-06-22T10:10:05.123Z"
 }</pre>
                     </div>
 
