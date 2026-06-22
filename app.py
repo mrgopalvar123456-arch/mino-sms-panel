@@ -382,6 +382,7 @@ def get_leaderboard():
                 continue
             hours = get_hours_diff(log.get('createdAt'))
             
+            # Lifetime
             lifetime_counts[uid] = lifetime_counts.get(uid, 0) + 1
             if hours <= 168:
                 weekly_counts[uid] = weekly_counts.get(uid, 0) + 1
@@ -1693,7 +1694,7 @@ def index():
                         {{ apiBaseUrl }}/@public/api/console?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
                       </div>
                       <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
-                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+                      <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
   "status": "success",
   "data": [
     {
@@ -2354,7 +2355,7 @@ def admin_portal():
                 </div>
                 <div>
                   <label class="text-xs font-bold text-slate-500">Admin Password</label>
-                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-rose-600 transition" />
+                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-rose-600 transition outline-none" />
                 </div>
 
                 <button type="submit" :disabled="authLoading" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
