@@ -540,13 +540,23 @@ def getnum():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 2. Live Access Status API (GET only as requested)
+# 2. Live Access Status API (GET only as requested - Proxied/Forwarded to STEX LiveAccess API)
 @app.route('/@public/api/liveaccess', methods=['GET'])
 def liveaccess():
     user = get_current_user_optimized()
     if not user:
         return jsonify({'status': 'error', 'message': 'Access Denied. Invalid or Missing API credentials.'}), 402
-    return jsonify({
+    
+    stex_data = {}
+    try:
+        # Calling STEX liveaccess endpoint dynamically as requested
+        res = requests.get(f"{STEX_BASE_URL}/liveaccess", headers={'mauthapi': STEX_API_KEY}, timeout=4)
+        if res.status_code == 200:
+            stex_data = res.json()
+    except Exception as e:
+        print("STEX Live Access API Call Error:", e)
+
+    response_payload = {
         'status': 'success',
         'message': 'API credentials validated successfully',
         'client': {
@@ -556,7 +566,15 @@ def liveaccess():
             'balance': user.get('balance', 0.0),
             'otp_rate': user.get('otp_rate', 0.40)
         }
-    })
+    }
+
+    # Merging the STEX raw liveaccess API response into our response payload securely
+    if isinstance(stex_data, dict):
+        for k, v in stex_data.items():
+            if k not in response_payload:
+                response_payload[k] = v
+
+    return jsonify(response_payload)
 
 # 3. Successful OTP Reports API (GET only as requested)
 @app.route('/@public/api/success-otp', methods=['GET'])
@@ -1559,16 +1577,24 @@ def index():
                   
                   <div v-else class="space-y-2.5">
                     <div v-for="log in liveLogs" :key="log.range + '_' + log.service + '_' + log.time" @click="copyToClipboard(log.range)" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition duration-300 active:scale-[0.99] space-y-2">
-                      <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
-                        <span class="text-xs font-black text-[#0088CC] uppercase tracking-wide">
-                          {{ log.range }}
-                        </span>
+                      <div class="flex justify-between items-start border-b border-slate-100 pb-1.5">
+                        <div>
+                          <!-- Service Name in Bold -->
+                          <span class="text-xs font-black text-[#0088CC] uppercase tracking-wide block">
+                            {{ log.service }}
+                          </span>
+                          <!-- Range ID below Service Name -->
+                          <span class="text-[10px] font-bold text-slate-500 block mt-0.5">
+                            {{ log.range }}
+                          </span>
+                        </div>
+                        <!-- Country Pill on the right -->
                         <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
                           {{ log.country }}
                         </span>
                       </div>
                       <div class="space-y-1">
-                        <p class="font-mono font-bold text-slate-800 text-[11px] leading-tight break-words">
+                        <p class="font-mono font-bold text-slate-800 text-[11px] leading-tight break-words mt-1">
                           {{ log.message }}
                         </p>
                       </div>
@@ -1772,7 +1798,7 @@ def index():
                     <!-- GET Access status -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">2. Client Access Status</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1795,7 +1821,7 @@ def index():
                     <!-- GET Success logs -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">3. Success OTP logs</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1820,7 +1846,7 @@ def index():
                     <!-- GET Console tracks -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">4. Console Tracker signal stream</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -2430,6 +2456,10 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("Number successfully allocated!");
+                  // Automatically copy allocated number to clipboard as requested
+                  if (data.number) {
+                    copyToClipboard(data.number);
+                  }
                   fetchGeneralData(); 
                 } else {
                   alert(data.message);
@@ -2856,7 +2886,7 @@ def admin_portal():
                 <!-- Service Specific Payout Rates & Control Status Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration (৳)
+                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration
                   </h3>
                   <p class="text-[10px] text-slate-400 font-semibold leading-relaxed">
                     Configure the payout rate and active status (ON/OFF) for each service. If a service status is toggled to OFF, users will not receive any balance reward upon OTP hits on that service.
