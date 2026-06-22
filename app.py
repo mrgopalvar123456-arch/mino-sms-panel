@@ -95,14 +95,71 @@ def after_request(response):
 # Database Handlers (Optimized Queries)
 # =========================================================================
 COUNTRY_PREFIXES = {
-    "224": "Guinea", "225": "Ivory Coast", "236": "Central African Republic",
-    "221": "Senegal", "223": "Mali", "226": "Burkina Faso", "227": "Niger",
-    "228": "Togo", "229": "Benin", "237": "Cameroon", "241": "Gabon",
-    "242": "Congo", "243": "DR Congo", "235": "Chad", "240": "Equatorial Guinea",
-    "231": "Liberia", "232": "Sierra Leone", "233": "Ghana", "234": "Nigeria",
-    "250": "Rwanda", "254": "Kenya", "255": "Tanzania", "256": "Uganda",
-    "257": "Burundi", "261": "Madagascar", "269": "Comoros"
+    # South Asia
+    "880": "Bangladesh", "91": "India", "92": "Pakistan", "94": "Sri Lanka",
+    "977": "Nepal", "93": "Afghanistan", "960": "Maldives", "975": "Bhutan",
+    
+    # Southeast Asia & East Asia
+    "86": "China", "81": "Japan", "82": "South Korea", "886": "Taiwan",
+    "60": "Malaysia", "65": "Singapore", "62": "Indonesia", "66": "Thailand",
+    "84": "Vietnam", "63": "Philippines", "95": "Myanmar", "855": "Cambodia",
+    "856": "Laos", "673": "Brunei", "670": "East Timor", "852": "Hong Kong",
+    "853": "Macau", "976": "Mongolia", "850": "North Korea",
+    
+    # Middle East & Central Asia
+    "966": "Saudi Arabia", "971": "UAE", "965": "Kuwait", "974": "Qatar",
+    "968": "Oman", "973": "Bahrain", "967": "Yemen", "962": "Jordan",
+    "961": "Lebanon", "963": "Syria", "964": "Iraq", "972": "Israel",
+    "98": "Iran", "90": "Turkey", "7": "Russia/Kazakhstan", "992": "Tajikistan",
+    "993": "Turkmenistan", "994": "Azerbaijan", "995": "Georgia", "996": "Kyrgyzstan",
+    "998": "Uzbekistan", "374": "Armenia",
+    
+    # Europe
+    "44": "United Kingdom", "49": "Germany", "33": "France", "39": "Italy",
+    "34": "Spain", "31": "Netherlands", "32": "Belgium", "41": "Switzerland",
+    "43": "Austria", "46": "Sweden", "47": "Norway", "45": "Denmark",
+    "358": "Finland", "353": "Ireland", "351": "Portugal", "30": "Greece",
+    "48": "Poland", "420": "Czech Republic", "36": "Hungary", "40": "Romania",
+    "359": "Bulgaria", "380": "Ukraine", "375": "Belarus", "381": "Serbia",
+    "385": "Croatia", "386": "Slovenia", "387": "Bosnia and Herzegovina",
+    "389": "North Macedonia", "355": "Albania", "373": "Moldova", "370": "Lithuania",
+    "371": "Latvia", "372": "Estonia", "354": "Iceland", "356": "Malta",
+    "357": "Cyprus", "376": "Andorra", "377": "Monaco", "378": "San Marino",
+    "379": "Vatican City", "421": "Slovakia", "423": "Liechtenstein", "382": "Montenegro",
+    
+    # North America & Caribbean
+    "1": "USA/Canada/Caribbean", # (Includes Jamaica, Bahamas, etc. via NANP)
+    "52": "Mexico", "502": "Guatemala", "503": "El Salvador", "504": "Honduras",
+    "505": "Nicaragua", "506": "Costa Rica", "507": "Panama", "53": "Cuba",
+    "509": "Haiti", "501": "Belize",
+    
+    # South America
+    "55": "Brazil", "54": "Argentina", "57": "Colombia", "58": "Venezuela",
+    "51": "Peru", "56": "Chile", "593": "Ecuador", "591": "Bolivia",
+    "595": "Paraguay", "598": "Uruguay", "592": "Guyana", "597": "Suriname",
+    
+    # Africa (Your list expanded)
+    "20": "Egypt", "27": "South Africa", "234": "Nigeria", "2 Kenya": "254",
+    "212": "Morocco", "213": "Algeria", "216": "Tunisia", "218": "Libya",
+    "249": "Sudan", "251": "Ethiopia", "2 Somalia": "252", "2 Djibuti": "253",
+    "211": "South Sudan", "221": "Senegal", "222": "Mauritania", "223": "Mali",
+    "224": "Guinea", "225": "Ivory Coast", "226": "Burkina Faso", "227": "Niger",
+    "228": "Togo", "229": "Benin", "230": "Mauritius", "231": "Liberia",
+    "232": "Sierra Leone", "233": "Ghana", "235": "Chad", "236": "Central African Republic",
+    "237": "Cameroon", "238": "Cape Verde", "239": "Sao Tome and Principe",
+    "240": "Equatorial Guinea", "241": "Gabon", "242": "Congo", "243": "DR Congo",
+    "244": "Angola", "245": "Guinea-Bissau", "248": "Seychelles", "250": "Rwanda",
+    "254": "Kenya", "255": "Tanzania", "256": "Uganda", "257": "Burundi",
+    "258": "Mozambique", "260": "Zambia", "261": "Madagascar", "262": "Reunion/Mayotte",
+    "263": "Zimbabwe", "264": "Namibia", "265": "Malawi", "266": "Lesotho",
+    "267": "Botswana", "268": "Eswatini", "269": "Comoros", "291": "Eritrea",
+    
+    # Oceania
+    "61": "Australia", "64": "New Zealand", "679": "Fiji", "675": "Papua New Guinea",
+    "685": "Samoa", "676": "Tonga", "677": "Solomon Islands", "678": "Vanuatu",
+    "682": "Cook Islands", "687": "New Caledonia", "689": "French Polynesia"
 }
+
 
 def get_country_from_range(range_str):
     if not range_str:
