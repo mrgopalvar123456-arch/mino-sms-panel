@@ -350,7 +350,6 @@ def request_withdrawal():
 @app.route('/api/v1/leaderboard', methods=['GET'])
 def get_leaderboard():
     try:
-        # Strict Verification Check to Prevent Data Theft
         user = get_current_user_optimized()
         if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key or Unauthorized access.'}), 402
@@ -380,12 +379,9 @@ def get_leaderboard():
                 continue
             hours = get_hours_diff(log.get('createdAt'))
             
-            # Lifetime
             lifetime_counts[uid] = lifetime_counts.get(uid, 0) + 1
-            # Weekly / Weekend (within last 7 days)
             if hours <= 168:
                 weekly_counts[uid] = weekly_counts.get(uid, 0) + 1
-            # Today (Reset/Restart every 25 Hours)
             if hours <= 25:
                 today_counts[uid] = today_counts.get(uid, 0) + 1
                 
@@ -410,7 +406,6 @@ def get_leaderboard():
         w_rank = build_ranking(weekly_counts)
         l_rank = build_ranking(lifetime_counts)
         
-        # Fallback beautifully structured mock data to maintain aesthetic completeness
         if not t_rank:
             t_rank = [
                 {'name': 'Min****', 'id_code': 'MINO-8821', 'count': 14},
@@ -443,20 +438,16 @@ def get_leaderboard():
 # Public API Endpoints (GET & POST - Secured with 402 Error Code blocks)
 # =========================================================================
 
-# 1. Booking API
-@app.route('/@public/api/getnum', methods=['GET', 'POST'])
-@app.route('/api/v1/getnum', methods=['GET', 'POST'])
+# 1. Booking API (POST requested)
+@app.route('/@public/api/getnum', methods=['POST'])
+@app.route('/api/v1/getnum', methods=['POST', 'GET'])
 def getnum():
     try:
-        if request.method == 'POST':
-            data = request.json or request.form or {}
-            rid = data.get('rid')
-            national = data.get('national', '1')
-            remove_plus = data.get('remove_plus', '1')
-        else:
-            rid = request.args.get('rid')
-            national = request.args.get('national', '1')
-            remove_plus = request.args.get('remove_plus', '1')
+        # Check params from both JSON and args
+        data = request.json or request.form or {}
+        rid = data.get('rid') or request.args.get('rid')
+        national = data.get('national', '1') or request.args.get('national', '1')
+        remove_plus = data.get('remove_plus', '1') or request.args.get('remove_plus', '1')
 
         user = get_current_user_optimized()
         if not user:
@@ -537,8 +528,8 @@ def getnum():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 2. Live Access Status API
-@app.route('/@public/api/liveaccess', methods=['GET', 'POST'])
+# 2. Live Access Status API (GET only as requested)
+@app.route('/@public/api/liveaccess', methods=['GET'])
 def liveaccess():
     user = get_current_user_optimized()
     if not user:
@@ -555,8 +546,8 @@ def liveaccess():
         }
     })
 
-# 3. Successful OTP Reports API (In-memory index fallbacks)
-@app.route('/@public/api/success-otp', methods=['GET', 'POST'])
+# 3. Successful OTP Reports API (GET only as requested)
+@app.route('/@public/api/success-otp', methods=['GET'])
 @app.route('/api/v1/success-otp', methods=['GET', 'POST'])
 def success_otp():
     try:
@@ -584,12 +575,11 @@ def success_otp():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 4. Live Console API (Secured - Returns 402 if Unauthorized)
-@app.route('/@public/api/console', methods=['GET', 'POST'])
+# 4. Live Console API (GET only as requested, Array list mapping optimized)
+@app.route('/@public/api/console', methods=['GET'])
 @app.route('/api/v1/live-console', methods=['GET', 'POST'])
 def get_live_console():
     try:
-        # Strict Verification Check to Prevent Data Theft
         user = get_current_user_optimized()
         if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key or Unauthorized access.'}), 402
@@ -597,24 +587,37 @@ def get_live_console():
         res = requests.get(f"{STEX_BASE_URL}/console", headers={'mauthapi': STEX_API_KEY}, timeout=4)
         if res.status_code == 200:
             stex_data = res.json()
-            meta = stex_data.get('meta', {})
-            if meta.get('status') == 'ok' or meta.get('code') == 200:
-                hits = stex_data.get('data', {}).get('hits', [])
-                data = []
-                for hit in hits:
-                    sid = hit.get('sid', 'Global')
-                    last_at = hit.get('last_at', 0)
-                    ranges = hit.get('ranges', [])
-                    for r in ranges:
-                        c_name = get_country_from_range(r)
-                        data.append({
-                            'range': r,
-                            'service': sid,
-                            'message': f"Signal intercepted on range {r} for {sid}",
-                            'time': last_at,
-                            'country': c_name
-                        })
-                return jsonify({'status': 'success', 'data': data})
+            hits = []
+            
+            # Handling both array list formatting and nested json formats securely
+            if isinstance(stex_data, list):
+                hits = stex_data
+            elif isinstance(stex_data, dict):
+                hits = stex_data.get('data', [])
+                if isinstance(hits, dict):
+                    hits = hits.get('hits', []) or hits.get('ranges', [])
+                if not hits and 'hits' in stex_data:
+                    hits = stex_data.get('hits', [])
+            
+            data = []
+            for hit in hits:
+                if not isinstance(hit, dict):
+                    continue
+                sid = hit.get('sid', 'Global')
+                last_at = hit.get('last_at', 0)
+                ranges = hit.get('ranges', [])
+                if not isinstance(ranges, list):
+                    continue
+                for r in ranges:
+                    c_name = get_country_from_range(r)
+                    data.append({
+                        'range': r,
+                        'service': sid,
+                        'message': f"Signal intercepted on range {r} for {sid}",
+                        'time': last_at,
+                        'country': c_name
+                    })
+            return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         print("STEX Console API Error:", e)
     return jsonify({'status': 'success', 'data': []})
@@ -1344,17 +1347,63 @@ def index():
 
               </div>
 
-              <!-- ==================== SECTION 3: Console (Up to 150 items limit and Top-sorting animation) ==================== -->
+              <!-- ==================== SECTION 3: Console (Interactive Top-Apps Chart & 150 Limit Sorting) ==================== -->
               <div v-if="currentTab === 'console'" class="space-y-6">
+                
+                <!-- Reactive 3rd Image Chart Module (Top Apps used based on Console Logs) -->
+                <div v-if="topApps.list.length > 0" class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-6">
+                  <div class="flex items-center gap-2 border-b pb-2">
+                    <i class="fa-solid fa-chart-simple text-[#0088CC] text-md"></i>
+                    <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest">Top Apps</h3>
+                  </div>
+
+                  <!-- Vertical Columns Layout Chart representation -->
+                  <div class="relative h-48 border-b border-slate-100 flex items-end justify-around pb-2 px-4 gap-4">
+                    <!-- Dashed Lines Grid (Y-Axis references) -->
+                    <div class="absolute inset-x-0 top-0 h-full flex flex-col justify-between pointer-events-none select-none opacity-30">
+                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                    </div>
+
+                    <!-- Column Pillars rendering dynamically -->
+                    <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="relative flex flex-col items-center group w-12 z-10">
+                      <span class="absolute -top-7 bg-slate-800 text-white text-[9px] px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-bold">
+                        {{ appItem.count }} OTPs
+                      </span>
+                      <div :style="{ height: appItem.percentage + '%' }" :class="barColors[idx % 4]" class="w-10 rounded-t-lg transition-all duration-500 relative flex items-end justify-center min-h-[10px]">
+                        <span class="text-[9px] font-black text-white mb-1 select-none">{{ appItem.count }}</span>
+                      </div>
+                      <span class="text-[9px] font-bold text-slate-400 mt-2 truncate max-w-full block">{{ appItem.name }}</span>
+                    </div>
+                  </div>
+
+                  <!-- Table Listing details matching Column indicators -->
+                  <div class="space-y-2.5">
+                    <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="flex justify-between items-center text-xs font-semibold">
+                      <div class="flex items-center gap-2">
+                        <span :class="dotColors[idx % 4]" class="h-3 w-3 rounded-full shrink-0"></span>
+                        <span class="text-slate-800 font-bold">{{ appItem.name }}</span>
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <span class="text-slate-800 font-black">{{ appItem.count }}</span>
+                        <span class="text-slate-400 font-bold w-10 text-right">{{ appItem.percentage }}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs flex justify-between items-center">
                   <div>
                     <div class="flex items-center gap-2">
-                      <i class="fa-solid fa-terminal text-[#0088CC] text-lg"></i>
-                      <h2 class="text-md font-black text-slate-900">Console</h2>
+                      <i class="fa-solid fa-satellite-dish text-[#0088CC] text-lg animate-pulse"></i>
+                      <h2 class="text-md font-black text-slate-900">Console Logs</h2>
                     </div>
-                    <p class="text-[10px] text-slate-400 font-medium mt-1">Intercept stream is automatically limited to 150 items. Clicking range logs will copy them instantly.</p>
+                    <p class="text-[10px] text-slate-400 font-medium mt-1">Limited to 150 items. New intercepted logs slide gracefully on top.</p>
                   </div>
-                  <span class="bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-bold px-3 py-1.5 rounded-full select-none">
+                  <span class="bg-slate-50 text-slate-600 text-[10px] font-bold px-3 py-1.5 rounded-full select-none border">
                     {{ liveLogs.length }} / 150 Active Logs
                   </span>
                 </div>
@@ -1362,7 +1411,6 @@ def index():
                 <div class="space-y-3">
                   <div v-if="liveLogs.length === 0" class="p-12 text-slate-400 text-center font-semibold bg-white border rounded-3xl text-xs">Initializing global signal tracker...</div>
                   
-                  <!-- Transition group for unshifting top insertion animations -->
                   <div v-else class="space-y-2.5">
                     <div v-for="log in liveLogs" :key="log.range + '_' + log.service + '_' + log.time" @click="copyToClipboard(log.range)" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition duration-300 active:scale-[0.99] space-y-2">
                       <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
@@ -1545,46 +1593,106 @@ def index():
                     <i class="fa-solid fa-terminal text-[#0088CC] text-lg"></i>
                     <h2 class="text-md font-black text-slate-900">Mino API Documentation & Test Lab</h2>
                   </div>
-                  <p class="text-xs text-slate-500 leading-relaxed font-semibold">
-                    Integrate the Mino SMS service into your custom scripts, bots, or backend using your unique API Key. Below is the API request schema and live tester.
-                  </p>
+                  <!-- Base URL prominently highlighted at top of documentation block -->
+                  <div class="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl font-semibold text-xs leading-relaxed text-indigo-900">
+                    <span class="text-[9px] uppercase font-black text-indigo-500 block mb-1">GLOBAL SERVER BASE PATH</span>
+                    <strong class="font-mono text-sm tracking-wide select-all">{{ apiBaseUrl }}</strong>
+                  </div>
                 </div>
 
                 <!-- API Routes Documentation -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-5">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest border-b pb-2">API Documentation Schemas</h3>
                   
-                  <div class="space-y-4">
-                    <div>
-                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/getnum</span>
-                      <h4 class="text-xs font-black text-slate-800 mt-2">1. Number Booking Endpoint</h4>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                  <div class="space-y-6">
+                    <!-- POST Booking (Only one declared as POST) -->
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded">POST</span>
+                        <h4 class="text-xs font-black text-slate-800">1. Number Booking Endpoint</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
                         {{ apiBaseUrl }}/@public/api/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
                       </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "number": "+2250789538803",
+  "country": "Ivory Coast",
+  "operator": "Orange"
+}</pre>
                     </div>
 
-                    <div>
-                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/liveaccess</span>
-                      <h4 class="text-xs font-black text-slate-800 mt-2">2. Client Access Status</h4>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                    <!-- GET Access status -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <h4 class="text-xs font-black text-slate-800">2. Client Access Status</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
                         {{ apiBaseUrl }}/@public/api/liveaccess?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
                       </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "message": "API credentials validated successfully",
+  "client": {
+    "uid": "usr_9fbf51db...",
+    "name": "Minhaz Sarkae",
+    "id_code": "MINO-8821",
+    "balance": 6.65,
+    "otp_rate": 0.40
+  }
+}</pre>
                     </div>
 
-                    <div>
-                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/success-otp</span>
-                      <h4 class="text-xs font-black text-slate-800 mt-2">3. Success OTP logs</h4>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                    <!-- GET Success logs -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <h4 class="text-xs font-black text-slate-800">3. Success OTP logs</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
                         {{ apiBaseUrl }}/@public/api/success-otp?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
                       </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "data": [
+    {
+      "number": "+2250789538803",
+      "service": "facebook",
+      "otp_code": "972450",
+      "message": "Your Facebook code is 972450",
+      "revenue_earned": 0.40,
+      "created_at": "2026-06-22T10:10:05.123Z"
+    }
+  ]
+}</pre>
                     </div>
 
-                    <div>
-                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/console</span>
-                      <h4 class="text-xs font-black text-slate-800 mt-2">4. Console Tracker signal stream</h4>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                    <!-- GET Console tracks -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <h4 class="text-xs font-black text-slate-800">4. Console Tracker signal stream</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
                         {{ apiBaseUrl }}/@public/api/console?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
                       </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "data": [
+    {
+      "range": "2250789XXX",
+      "service": "FACEBOOK",
+      "message": "Signal intercepted on range 2250789XXX for FACEBOOK",
+      "time": 1782099243663,
+      "country": "Ivory Coast"
+    }
+  ]
+}</pre>
                     </div>
                   </div>
                 </div>
@@ -1596,27 +1704,32 @@ def index():
                   </h3>
                   
                   <div class="grid sm:grid-cols-3 gap-3 text-xs font-bold">
+                    
+                    <!-- Dropdown api selector -->
                     <div>
                       <label class="text-slate-400">Select Target Endpoint</label>
                       <select v-model="selectedTestApi" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl font-semibold outline-none focus:border-[#0088CC]">
-                        <option value="getnum">getnum (Allocate Number)</option>
-                        <option value="liveaccess">liveaccess (Check Access Status)</option>
-                        <option value="success-otp">success-otp (Success logs)</option>
-                        <option value="console">console (Live Stream Logs)</option>
+                        <option value="getnum">getnum (Allocate Number - POST)</option>
+                        <option value="liveaccess">liveaccess (Check Access Status - GET)</option>
+                        <option value="success-otp">success-otp (Success logs - GET)</option>
+                        <option value="console">console (Live Stream Logs - GET)</option>
                       </select>
                     </div>
 
+                    <!-- Input range (conditional display) -->
                     <div v-if="selectedTestApi === 'getnum'">
                       <label class="text-slate-400">Target Range ID</label>
                       <input type="text" v-model="testRange" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
                     </div>
 
+                    <!-- Exec button -->
                     <div class="flex items-end" :class="selectedTestApi !== 'getnum' ? 'col-span-2' : ''">
                       <button @click="runLiveApiTest" :disabled="testApiLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl transition flex items-center justify-center gap-1.5 disabled:bg-slate-200">
                         <i v-if="testApiLoading" class="fa-solid fa-spinner animate-spin"></i>
                         <span>Execute API Test</span>
                       </button>
                     </div>
+
                   </div>
 
                   <!-- Test Response -->
@@ -1683,6 +1796,10 @@ def index():
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
             const apiBaseUrl = ref(window.location.origin);
+
+            // Chart bar indicator configurations matching column indicators in design representation
+            const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
+            const dotColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
 
             // Leaderboard Reactive Module
             const leaderboardTab = ref('today');
@@ -1802,7 +1919,7 @@ def index():
                   `${existingLog.range}_${existingLog.service}_${existingLog.time}` === key
                 );
                 if (!exists) {
-                  // New elements are unshifted sequentially to appear gracefully on top of list
+                  // New elements unshifted gracefully on top of list
                   liveLogs.value.unshift(newLog);
                 }
               });
@@ -1815,6 +1932,28 @@ def index():
                 liveLogs.value = liveLogs.value.slice(0, 150);
               }
             };
+
+            // Dynamic aggregation counting and sorting of top tracked services in chart indicators
+            const topApps = computed(() => {
+              const counts = {};
+              let total = 0;
+              liveLogs.value.forEach(log => {
+                const serviceName = log.service || 'Global';
+                counts[serviceName] = (counts[serviceName] || 0) + 1;
+                total++;
+              });
+              
+              const list = Object.keys(counts).map(key => {
+                return {
+                  name: key,
+                  count: counts[key],
+                  percentage: total > 0 ? Math.round((counts[key] / total) * 100) : 0
+                };
+              });
+              
+              list.sort((a, b) => b.count - a.count);
+              return { list: list.slice(0, 4), total };
+            });
 
             const fetchData = async () => {
               const token = localStorage.getItem('mino_session_token');
@@ -2005,7 +2144,20 @@ def index():
               try {
                 let url = '';
                 if (selectedTestApi.value === 'getnum') {
-                  url = `/@public/api/getnum?api_key=${profile.value.api_key}&rid=${testRange.value}`;
+                  // Mapped to secure POST booking endpoint simulation
+                  const postRes = await fetch(`/@public/api/getnum`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      api_key: profile.value.api_key,
+                      rid: testRange.value,
+                      national: 1,
+                      remove_plus: 1
+                    })
+                  });
+                  const postData = await postRes.json();
+                  testApiResponse.value = JSON.stringify(postData, null, 2);
+                  return;
                 } else if (selectedTestApi.value === 'liveaccess') {
                   url = `/@public/api/liveaccess?api_key=${profile.value.api_key}`;
                 } else if (selectedTestApi.value === 'success-otp') {
@@ -2128,7 +2280,7 @@ def index():
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
               handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
               apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
-              leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal
+              barColors, dotColors, topApps, leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal
             };
           }
         }).mount('#app');
@@ -2170,7 +2322,7 @@ def admin_portal():
         <div v-cloak v-else>
 
           <!-- Toast Notifications -->
-          <div v-if="toast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white font-black text-xs px-5 py-3 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
+          <div v-if="toast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-[#0088CC] text-white font-black text-xs px-5 py-3 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
             {{ toastMessage }}
           </div>
 
