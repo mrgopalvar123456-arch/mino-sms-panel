@@ -43,8 +43,8 @@ elif not firebase_admin._apps:
 # =========================================================================
 # Admin Credentials and Authentication Helpers
 # =========================================================================
-ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
-ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin123")
+ADMIN_USER = os.environ.get("ADMIN_USERNAME", "Mino420@")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "Mino420@admin")
 ADMIN_STATIC_TOKEN = f"admin_tkn_{ADMIN_PASS}"
 
 def verify_admin():
