@@ -382,7 +382,6 @@ def get_leaderboard():
                 continue
             hours = get_hours_diff(log.get('createdAt'))
             
-            # Lifetime
             lifetime_counts[uid] = lifetime_counts.get(uid, 0) + 1
             if hours <= 168:
                 weekly_counts[uid] = weekly_counts.get(uid, 0) + 1
@@ -1185,7 +1184,7 @@ def index():
                   </div>
                 </div>
 
-                <!-- SUMMARY CARD: Realtime dynamic aggregation of user requested numbers -->
+                <!-- SUMMARY CARD: Realtime dynamic aggregation of user activity numbers -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                     <i class="fa-solid fa-square-poll-vertical text-[#0088CC]"></i> WORK SUMMARY
@@ -3716,7 +3715,7 @@ def admin_portal():
       </div>
 
       <script>
-        const { createApp, ref, onMounted, watch, computed } = Vue;
+        const { createApp, ref, onMounted, computed } = Vue;
 
         createApp({
           setup() {
