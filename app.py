@@ -43,8 +43,8 @@ elif not firebase_admin._apps:
 # =========================================================================
 # Admin Credentials and Authentication Helpers
 # =========================================================================
-ADMIN_USER = os.environ.get("ADMIN_USERNAME", "Mino420@")
-ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "Mino420@admin")
+ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin123")
 ADMIN_STATIC_TOKEN = f"admin_tkn_{ADMIN_PASS}"
 
 def verify_admin():
@@ -153,7 +153,6 @@ def mask_number(number):
     return f"{number[:6]}****{number[length-3:]}"
 
 # Highly Robust Authentication Middleware supporting multiple header formats, JSON parameter inputs and forms
-# Note: Users authenticating via API Key MUST have an approved API key (api_key_approved is True)
 def get_current_user_optimized():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -277,7 +276,6 @@ def get_me():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Generate API Key: Requires Admin approval to set active (api_key_approved = True)
 @app.route('/api/v1/user/generate-key', methods=['POST'])
 def generate_api_key():
     try:
@@ -290,9 +288,9 @@ def generate_api_key():
         existing_key = user.get('api_key')
         
         if existing_key and not api_key_approved:
-            return jsonify({'status': 'success', 'message': 'API Key generated but pending administrator approval.', 'api_key': existing_key, 'api_key_approved': False})
+            return jsonify({'status': 'success', 'message': 'API Key request is pending admin approval', 'api_key': existing_key, 'api_key_approved': False})
         elif existing_key and api_key_approved:
-            return jsonify({'status': 'success', 'message': 'Approved API Key already exists.', 'api_key': existing_key, 'api_key_approved': True})
+            return jsonify({'status': 'success', 'message': 'API Key is already active and approved', 'api_key': existing_key, 'api_key_approved': True})
         
         unique_key = 'mino_live_' + secrets.token_hex(16)
         updates = {
@@ -300,7 +298,7 @@ def generate_api_key():
             'api_key_approved': False
         }
         fb_db.reference(f'/users/{user_id}').update(updates)
-        return jsonify({'status': 'success', 'message': 'API Key generated. Awaiting administrator approval.', 'api_key': unique_key, 'api_key_approved': False})
+        return jsonify({'status': 'success', 'message': 'API Key generated. Awaiting admin approval.', 'api_key': unique_key, 'api_key_approved': False})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -354,7 +352,7 @@ def request_withdrawal():
             'amount': amount,
             'method': method,
             'address': address,
-            'status': 'pending',
+            'status': 'approved' if method == 'manual' else 'pending',
             'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
         fb_db.reference(f'/withdrawals/{with_id}').set(withdrawal_data)
@@ -458,7 +456,6 @@ def get_leaderboard():
 # =========================================================================
 
 # 1. Booking API (Supports GET and POST, robust parameter parser)
-# Enforces 12-second cooldown rate limits for users without approved API Key.
 @app.route('/@public/api/getnum', methods=['POST', 'GET'])
 @app.route('/api/v1/getnum', methods=['POST', 'GET'])
 def getnum():
@@ -504,7 +501,6 @@ def getnum():
                 except Exception as ex:
                     print("Cooldown parser error:", ex)
             
-            # Update last booking timestamp
             fb_db.reference(f'/users/{user_id}/last_booking_time').set(now.isoformat())
 
         clean_rid = str(rid).upper().replace('X', '').strip()
@@ -586,7 +582,6 @@ def liveaccess():
         return jsonify({'status': 'error', 'message': 'Access Denied. Invalid or Missing API credentials.'}), 402
     
     try:
-        # Dynamic proxy to return the exact raw response format of the voltxsms backend
         res = requests.get(f"{VOLTX_BASE_URL}/liveaccess", headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
         if res.status_code == 200:
             return Response(res.text, mimetype='application/json')
@@ -831,7 +826,8 @@ def check_number_status():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# User allocations sync router
+# User allocations sync router - EXTREMELY OPTIMIZED
+# Skip making requests to VoltxSMS if the user does not have any active allocations!
 @app.route('/api/v1/user-allocations', methods=['GET'])
 def get_user_allocations():
     try:
@@ -846,106 +842,109 @@ def get_user_allocations():
         all_allocs_list = firebase_to_list(all_allocs_dict)
         active_allocs_list = [alloc for alloc in all_allocs_list if alloc.get('userId') == user_id]
 
-        service_rates = fb_db.reference('/settings/service_rates').get() or {}
-        service_rates = {k.lower(): v for k, v in service_rates.items()}
+        # Only connect to VoltxSMS if the user has at least one active number allocation
+        has_active_allocations = any(alloc.get('status') == 'active' for alloc in active_allocs_list)
+        if has_active_allocations:
+            service_rates = fb_db.reference('/settings/service_rates').get() or {}
+            service_rates = {k.lower(): v for k, v in service_rates.items()}
 
-        try:
-            res = requests.get(f"{VOLTX_BASE_URL}/success-otp", headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
-            if res.status_code == 200:
-                json_data = res.json()
-                meta = json_data.get('meta', {})
-                if meta.get('status') == 'ok' or meta.get('code') == 200:
-                    otps = json_data.get('data', {}).get('otps', [])
-                    for otp_item in otps:
-                        otp_num = str(otp_item.get('number', '')).replace('+', '').strip()
-                        
-                        for alloc in active_allocs_list:
-                            alloc_num = str(alloc.get('number', '')).replace('+', '').strip()
-                            if alloc['status'] == 'active' and (alloc_num in otp_num or otp_num in alloc_num):
-                                message = otp_item.get('message', '')
-                                
-                                # Exact 4 to 9 digits clean matching system
-                                otp_code = ""
-                                match = re.search(r'\b\d{4,9}\b', message)
-                                if match:
-                                    otp_code = match.group(0)
-                                else:
-                                    any_digits = re.findall(r'\d+', message)
-                                    if any_digits:
-                                        otp_code = max(any_digits, key=len)
-                                        if len(otp_code) > 9:
-                                            otp_code = otp_code[:9]
-                                    else:
-                                        otp_code = "N/A"
-
-                                service = 'generic'
-                                msg_lower = message.lower()
-                                if 'facebook' in msg_lower or 'fb' in msg_lower:
-                                    service = 'facebook'
-                                elif 'instagram' in msg_lower or 'ig' in msg_lower:
-                                    service = 'instagram'
-                                elif 'whatsapp' in msg_lower or 'wa' in msg_lower:
-                                    service = 'whatsapp'
-                                elif 'telegram' in msg_lower or 'tg' in msg_lower:
-                                    service = 'telegram'
-                                elif 'google' in msg_lower or 'g-' in msg_lower:
-                                    service = 'google'
-
-                                logs_ref = fb_db.reference('/otp_logs')
-                                all_logs = logs_ref.get() or {}
-                                exist_log = False
-                                for item in firebase_to_list(all_logs):
-                                    if item.get('number') == alloc['number']:
-                                        exist_log = True
-                                        break
-                                
-                                if not exist_log:
-                                    svc_config = service_rates.get(service)
-                                    svc_status = 'ON'
-                                    svc_payout_rate = otp_rate
-
-                                    if isinstance(svc_config, dict):
-                                        svc_status = str(svc_config.get('status', 'ON')).upper()
-                                        svc_payout_rate = float(svc_config.get('rate', otp_rate))
-                                    elif svc_config is not None:
-                                        try:
-                                            svc_payout_rate = float(svc_config)
-                                        except ValueError:
-                                            pass
-
-                                    earned_revenue = 0.00 if svc_status == 'OFF' else svc_payout_rate
-
-                                    new_balance = float(user.get('balance', 0.0)) + earned_revenue
-                                    fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
+            try:
+                res = requests.get(f"{VOLTX_BASE_URL}/success-otp", headers={'mauthapi': VOLTX_API_KEY}, timeout=3)
+                if res.status_code == 200:
+                    json_data = res.json()
+                    meta = json_data.get('meta', {})
+                    if meta.get('status') == 'ok' or meta.get('code') == 200:
+                        otps = json_data.get('data', {}).get('otps', [])
+                        for otp_item in otps:
+                            otp_num = str(otp_item.get('number', '')).replace('+', '').strip()
+                            
+                            for alloc in active_allocs_list:
+                                alloc_num = str(alloc.get('number', '')).replace('+', '').strip()
+                                if alloc['status'] == 'active' and (alloc_num in otp_num or otp_num in alloc_num):
+                                    message = otp_item.get('message', '')
                                     
-                                    otp_id = "otp_" + secrets.token_hex(8)
-                                    fb_db.reference(f'/otp_logs/{otp_id}').set({
-                                        'userId': user_id,
-                                        'number': alloc['number'],
+                                    # Exact 4 to 9 digits clean matching system
+                                    otp_code = ""
+                                    match = re.search(r'\b\d{4,9}\b', message)
+                                    if match:
+                                        otp_code = match.group(0)
+                                    else:
+                                        any_digits = re.findall(r'\d+', message)
+                                        if any_digits:
+                                            otp_code = max(any_digits, key=len)
+                                            if len(otp_code) > 9:
+                                                otp_code = otp_code[:9]
+                                        else:
+                                            otp_code = "N/A"
+
+                                    service = 'generic'
+                                    msg_lower = message.lower()
+                                    if 'facebook' in msg_lower or 'fb' in msg_lower:
+                                        service = 'facebook'
+                                    elif 'instagram' in msg_lower or 'ig' in msg_lower:
+                                        service = 'instagram'
+                                    elif 'whatsapp' in msg_lower or 'wa' in msg_lower:
+                                        service = 'whatsapp'
+                                    elif 'telegram' in msg_lower or 'tg' in msg_lower:
+                                        service = 'telegram'
+                                    elif 'google' in msg_lower or 'g-' in msg_lower:
+                                        service = 'google'
+
+                                    logs_ref = fb_db.reference('/otp_logs')
+                                    all_logs = logs_ref.get() or {}
+                                    exist_log = False
+                                    for item in firebase_to_list(all_logs):
+                                        if item.get('number') == alloc['number']:
+                                            exist_log = True
+                                            break
+                                    
+                                    if not exist_log:
+                                        svc_config = service_rates.get(service)
+                                        svc_status = 'ON'
+                                        svc_payout_rate = otp_rate
+
+                                        if isinstance(svc_config, dict):
+                                            svc_status = str(svc_config.get('status', 'ON')).upper()
+                                            svc_payout_rate = float(svc_config.get('rate', otp_rate))
+                                        elif svc_config is not None:
+                                            try:
+                                                svc_payout_rate = float(svc_config)
+                                            except ValueError:
+                                                pass
+
+                                        earned_revenue = 0.00 if svc_status == 'OFF' else svc_payout_rate
+
+                                        new_balance = float(user.get('balance', 0.0)) + earned_revenue
+                                        fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
+                                        
+                                        otp_id = "otp_" + secrets.token_hex(8)
+                                        fb_db.reference(f'/otp_logs/{otp_id}').set({
+                                            'userId': user_id,
+                                            'number': alloc['number'],
+                                            'service': service,
+                                            'otpCode': otp_code,
+                                            'message': message,
+                                            'revenue': earned_revenue,
+                                            'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                        })
+
+                                    alloc_id = alloc.get('id')
+                                    if alloc_id:
+                                        fb_db.reference(f'/allocated_numbers/{alloc_id}').update({
+                                            'status': 'completed',
+                                            'otp': otp_code,
+                                            'message': message
+                                        })
+
+                                    console_id = "con_" + secrets.token_hex(8)
+                                    fb_db.reference(f'/live_console/{console_id}').set({
+                                        'type': 'otp_success',
+                                        'message': f"HIT! {service.upper()} OTP Received on {mask_number(alloc['number'])}!",
                                         'service': service,
-                                        'otpCode': otp_code,
-                                        'message': message,
-                                        'revenue': earned_revenue,
                                         'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     })
-
-                                alloc_id = alloc.get('id')
-                                if alloc_id:
-                                    fb_db.reference(f'/allocated_numbers/{alloc_id}').update({
-                                        'status': 'completed',
-                                        'otp': otp_code,
-                                        'message': message
-                                    })
-
-                                console_id = "con_" + secrets.token_hex(8)
-                                fb_db.reference(f'/live_console/{console_id}').set({
-                                    'type': 'otp_success',
-                                    'message': f"HIT! {service.upper()} OTP Received on {mask_number(alloc['number'])}!",
-                                    'service': service,
-                                    'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
-                                })
-        except Exception as e:
-            print("Background OTP sync error:", e)
+            except Exception as e:
+                print("Background OTP sync error:", e)
 
         now = datetime.datetime.now(datetime.timezone.utc)
         for alloc in active_allocs_list:
@@ -1005,7 +1004,7 @@ def resource_not_found(e):
     return "Page Not Found", 404
 
 # =========================================================================
-# API Routes for Admin Panel
+# API Routes for Admin Panel - Consolidate endpoint to fetch entire dashboard at once
 # =========================================================================
 @app.route('/api/v1/admin/login', methods=['POST'])
 def admin_api_login():
@@ -1019,45 +1018,77 @@ def admin_api_login():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/api/v1/admin/dashboard', methods=['GET'])
-def admin_api_dashboard():
+# High-Performance Consolidated Admin Endpoint
+@app.route('/api/v1/admin/dashboard-all', methods=['GET'])
+def admin_api_dashboard_all():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        total_users = len(fb_db.reference('/users').get() or {})
-        pending_users = 0
-        all_users = fb_db.reference('/users').get() or {}
-        if isinstance(all_users, dict):
-            pending_users = sum(1 for u in all_users.values() if u.get('status') == 'pending')
+        # Fetch the entire database layout once to minimize roundtrips
+        db_data = fb_db.reference('/').get() or {}
+        
+        users_dict = db_data.get('users', {})
+        users_list = firebase_to_list(users_dict)
+        users_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        allocs_dict = db_data.get('allocated_numbers', {})
+        allocs_list = firebase_to_list(allocs_dict)
+        allocs_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        otp_logs_dict = db_data.get('otp_logs', {})
+        otp_logs_list = firebase_to_list(otp_logs_dict)
+        otp_logs_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        withdrawals_dict = db_data.get('withdrawals', {})
+        withdrawals_list = firebase_to_list(withdrawals_dict)
+        withdrawals_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        settings = db_data.get('settings', {})
+        m_mode = settings.get('maintenance_mode', False)
+        announcement = settings.get('announcement', '')
+        raw_rates = settings.get('service_rates', {})
+        
+        default_services = ['facebook', 'instagram', 'whatsapp', 'telegram', 'google', 'generic']
+        rates = {}
+        for svc in default_services:
+            item = raw_rates.get(svc)
+            if isinstance(item, dict):
+                rates[svc] = {
+                    'rate': float(item.get('rate', 0.40)),
+                    'status': str(item.get('status', 'ON')).upper()
+                }
+            else:
+                legacy_val = 0.40
+                if item is not None:
+                    try:
+                        legacy_val = float(item)
+                    except ValueError:
+                        pass
+                default_status = 'OFF' if svc in ['whatsapp', 'telegram'] else 'ON'
+                rates[svc] = {
+                    'rate': legacy_val,
+                    'status': default_status
+                }
 
-        total_allocations = len(fb_db.reference('/allocated_numbers').get() or {})
-        total_otps = len(fb_db.reference('/otp_logs').get() or {})
-        total_withdrawals = len(fb_db.reference('/withdrawals').get() or {})
-        m_mode = is_maintenance()
+        pending_users = sum(1 for u in users_list if u.get('status') == 'pending')
         
         return jsonify({
             'status': 'success',
             'stats': {
-                'total_users': total_users,
+                'total_users': len(users_list),
                 'pending_users': pending_users,
-                'total_allocations': total_allocations,
-                'total_otps': total_otps,
-                'total_withdrawals': total_withdrawals,
-                'maintenance_mode': m_mode
-            }
+                'total_allocations': len(allocs_list),
+                'total_otps': len(otp_logs_list),
+                'total_withdrawals': len(withdrawals_list),
+                'maintenance_mode': bool(m_mode),
+                'announcement': announcement
+            },
+            'users': users_list,
+            'allocations': allocs_list,
+            'otp_logs': otp_logs_list,
+            'withdrawals': withdrawals_list,
+            'rates': rates
         })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/v1/admin/users', methods=['GET'])
-def admin_api_users():
-    if not verify_admin():
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    try:
-        users_dict = fb_db.reference('/users').get() or {}
-        users_list = firebase_to_list(users_dict)
-        users_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
-        return jsonify({'status': 'success', 'users': users_list})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1133,38 +1164,6 @@ def admin_api_announcement():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-@app.route('/api/v1/admin/settings/service-rates', methods=['GET'])
-def admin_get_service_rates():
-    if not verify_admin():
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    try:
-        raw_rates = fb_db.reference('/settings/service_rates').get() or {}
-        default_services = ['facebook', 'instagram', 'whatsapp', 'telegram', 'google', 'generic']
-        rates = {}
-        
-        for svc in default_services:
-            item = raw_rates.get(svc)
-            if isinstance(item, dict):
-                rates[svc] = {
-                    'rate': float(item.get('rate', 0.40)),
-                    'status': str(item.get('status', 'ON')).upper()
-                }
-            else:
-                legacy_val = 0.40
-                if item is not None:
-                    try:
-                        legacy_val = float(item)
-                    except ValueError:
-                        pass
-                default_status = 'OFF' if svc in ['whatsapp', 'telegram'] else 'ON'
-                rates[svc] = {
-                    'rate': legacy_val,
-                    'status': default_status
-                }
-        return jsonify({'status': 'success', 'rates': rates})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
 @app.route('/api/v1/admin/settings/service-rates', methods=['POST'])
 def admin_set_service_rates():
     if not verify_admin():
@@ -1187,18 +1186,6 @@ def admin_set_service_rates():
                 }
         fb_db.reference('/settings/service_rates').set(sanitized_rates)
         return jsonify({'status': 'success', 'message': 'Service payout rates successfully updated', 'rates': sanitized_rates})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/v1/admin/withdrawals', methods=['GET'])
-def admin_get_withdrawals():
-    if not verify_admin():
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    try:
-        withdrawals_dict = fb_db.reference('/withdrawals').get() or {}
-        withdrawals_list = firebase_to_list(withdrawals_dict)
-        withdrawals_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
-        return jsonify({'status': 'success', 'withdrawals': withdrawals_list})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1241,30 +1228,6 @@ def admin_api_backup():
     try:
         data = fb_db.reference('/').get()
         return jsonify({'status': 'success', 'data': data})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/v1/admin/allocations', methods=['GET'])
-def admin_api_allocations():
-    if not verify_admin():
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    try:
-        allocs_dict = fb_db.reference('/allocated_numbers').get() or {}
-        allocs_list = firebase_to_list(allocs_dict)
-        allocs_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
-        return jsonify({'status': 'success', 'allocations': allocs_list})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/v1/admin/otp-logs', methods=['GET'])
-def admin_api_otp_logs():
-    if not verify_admin():
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    try:
-        logs_dict = fb_db.reference('/otp_logs').get() or {}
-        logs_list = firebase_to_list(logs_dict)
-        logs_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
-        return jsonify({'status': 'success', 'otp_logs': logs_list})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1616,7 +1579,7 @@ def index():
                           </div>
                         </div>
 
-                        <!-- COLUMN 2: SMS (Displays exact extracted numeric digit code in a customized box. Clicking copies full SMS) -->
+                        <!-- COLUMN 2: SMS -->
                         <div class="p-3 flex flex-col justify-center min-w-0">
                           <p class="text-[9px] md:text-[10px] text-slate-400 font-extrabold uppercase tracking-tight mb-1">SMS MESSAGE</p>
                           
@@ -1625,7 +1588,6 @@ def index():
                           </div>
                           
                           <div v-else-if="alloc.status === 'completed'" class="flex flex-col gap-1 min-w-0">
-                            <!-- Click handler configured to trigger full SMS message copy to clipboard instantly -->
                             <div @click="copyFullSms(alloc.message, alloc.otp)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-400 p-2 rounded-xl text-emerald-800 text-center cursor-pointer active:scale-95 transition flex items-center justify-between gap-2 group min-w-0 shadow-xs">
                               <div class="text-left truncate">
                                 <span class="text-[8px] text-emerald-600 font-black uppercase tracking-tight block">OTP Code</span>
@@ -1874,22 +1836,30 @@ def index():
                     <p class="text-slate-500">User ID Code: <span class="text-slate-800 font-bold ml-1">{{ profile ? profile.uid : 'N/A' }}</span></p>
                     
                     <div class="space-y-2">
-                      <p class="text-slate-500">API Access Key:</p>
-                      
-                      <div v-if="profile && profile.api_key" class="flex flex-col gap-2">
-                        <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all">
-                          {{ profile.api_key }}
-                        </span>
-                        <div class="flex flex-col gap-1.5">
-                          <span v-if="profile.api_key_approved" class="text-emerald-600 text-[10px] font-bold">
-                            <i class="fa-solid fa-circle-check"></i> API Key Approved (Unlimited booking rate-limit)
+                      <div v-if="profile && profile.api_key" class="space-y-2">
+                        <p class="text-slate-500">API Access Key:</p>
+                        
+                        <!-- If APPROVED: Show actual API key -->
+                        <div v-if="profile.api_key_approved" class="flex flex-col gap-2">
+                          <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all font-semibold">
+                            {{ profile.api_key }}
                           </span>
-                          <span v-else class="text-amber-600 text-[10px] font-bold animate-pulse">
-                            <i class="fa-solid fa-clock"></i> API Key Pending Admin Approval (12s cooldown applies)
+                          <span class="text-emerald-600 text-[10px] font-bold">
+                            <i class="fa-solid fa-circle-check"></i> API Key Approved (Unlimited access active)
                           </span>
-                          <button v-if="profile.api_key_approved" @click="copyToClipboard(profile.api_key)" class="bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition flex items-center gap-1 w-max">
+                          <button @click="copyToClipboard(profile.api_key)" class="bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition flex items-center gap-1 w-max">
                             Copy API Key <i class="fa-solid fa-copy"></i>
                           </button>
+                        </div>
+                        
+                        <!-- If NOT APPROVED: Hide actual API key and show 'API Key is disabled' -->
+                        <div v-else class="flex flex-col gap-2">
+                          <span class="text-rose-600 font-mono text-[11px] bg-rose-50 px-3 py-2 rounded border border-rose-200 font-black">
+                            API Key is disabled (Pending Admin Approval)
+                          </span>
+                          <span class="text-amber-600 text-[10px] font-bold animate-pulse">
+                            <i class="fa-solid fa-clock"></i> API Key Pending Admin Approval (12s cooldown applies)
+                          </span>
                         </div>
                       </div>
                       
@@ -2721,7 +2691,7 @@ def admin_portal():
                 </div>
                 <div>
                   <label class="text-xs font-bold text-slate-500">Admin Password</label>
-                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-rose-600 transition outline-none" />
+                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border-rose-600 transition outline-none" />
                 </div>
 
                 <button type="submit" :disabled="authLoading" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
@@ -2762,7 +2732,7 @@ def admin_portal():
                 </button>
               </nav>
 
-              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950 text-xs font-bold">
+              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-955 text-xs font-bold">
                 <span>ADMIN PORTAL</span>
                 <button @click="logOut" class="text-rose-400 hover:text-rose-600 font-black"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
               </div>
@@ -2954,7 +2924,7 @@ def admin_portal():
                         <tr v-if="withdrawals.length === 0">
                           <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No withdrawal requests found.</td>
                         </tr>
-                        <tr v-else-if="withdrawals" v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
+                        <tr v-else v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
                           <td class="p-4">
                             <p class="font-black text-slate-900 text-sm">{{ wd.userName }}</p>
                             <p class="text-[10px] text-slate-400 mt-0.5">{{ wd.userEmail }}</p>
@@ -3161,7 +3131,7 @@ def admin_portal():
 
             const serviceRates = ref({
               facebook: { rate: 0.40, status: 'ON' },
-              indigo: { rate: 0.40, status: 'ON' },
+              instagram: { rate: 0.40, status: 'ON' },
               whatsapp: { rate: 0.00, status: 'OFF' },
               telegram: { rate: 0.00, status: 'OFF' },
               google: { rate: 0.40, status: 'ON' },
@@ -3174,7 +3144,8 @@ def admin_portal():
               total_allocations: 0,
               total_otps: 0,
               total_withdrawals: 0,
-              maintenance_mode: false
+              maintenance_mode: false,
+              announcement: ''
             });
 
             const users = ref([]);
@@ -3222,77 +3193,31 @@ def admin_portal():
               triggerToast("Logged out securely. 🔒");
             };
 
+            // High-Performance Consolidated Admin UI fetch
             const fetchDashboardData = async () => {
               if (!adminToken.value) {
                 loading.value = false;
                 return;
               }
               try {
-                const statRes = await fetch('/api/v1/admin/dashboard', {
+                const res = await fetch('/api/v1/admin/dashboard-all', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
-                if (statRes.status === 401) { 
+                if (res.status === 401) { 
                   logOut(); 
                   loading.value = false;
                   return; 
                 }
-                const statData = await statRes.json();
-                if (statData.status === 'success') stats.value = statData.stats;
-
-                const userRes = await fetch('/api/v1/admin/users', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (userRes.status === 401) {
-                  logOut();
-                  loading.value = false;
-                  return;
+                const data = await res.json();
+                if (data.status === 'success') {
+                  stats.value = data.stats;
+                  users.value = data.users;
+                  allocations.value = data.allocations;
+                  otpLogs.value = data.otp_logs;
+                  withdrawals.value = data.withdrawals;
+                  serviceRates.value = data.rates;
+                  announcementInput.value = data.stats.announcement || '';
                 }
-                const userData = await userRes.json();
-                if (userData.status === 'success') users.value = userData.users;
-
-                const allocRes = await fetch('/api/v1/admin/allocations', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (allocRes.status === 401) {
-                  logOut();
-                  loading.value = false;
-                  return;
-                }
-                const allocData = await allocRes.json();
-                if (allocData.status === 'success') allocations.value = allocData.allocations;
-
-                const logRes = await fetch('/api/v1/admin/otp-logs', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (logRes.status === 401) {
-                  logOut();
-                  loading.value = false;
-                  return;
-                }
-                const logData = await logRes.json();
-                if (logData.status === 'success') otpLogs.value = logData.otp_logs;
-
-                const wdRes = await fetch('/api/v1/admin/withdrawals', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (wdRes.status === 401) {
-                  logOut();
-                  loading.value = false;
-                  return;
-                }
-                const wdData = await wdRes.json();
-                if (wdData.status === 'success') withdrawals.value = wdData.withdrawals;
-
-                const ratesRes = await fetch('/api/v1/admin/settings/service-rates', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (ratesRes.status === 200) {
-                  const ratesData = await ratesRes.json();
-                  if (ratesData.status === 'success') {
-                    serviceRates.value = { ...serviceRates.value, ...ratesData.rates };
-                  }
-                }
-
               } catch (e) {
                 console.log("Admin API error:", e);
               }
