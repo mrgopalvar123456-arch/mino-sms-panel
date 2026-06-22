@@ -724,8 +724,26 @@ def get_user_allocations():
                                 
                                 if not exist_log:
                                     # Use specific service rate if configured, fallback to user-level flat otp_rate
-                                    payout_rate = float(service_rates.get(service, otp_rate))
-                                    new_balance = float(user.get('balance', 0.0)) + payout_rate
+                                    svc_config = service_rates.get(service)
+                                    svc_status = 'ON'
+                                    svc_payout_rate = otp_rate
+
+                                    if isinstance(svc_config, dict):
+                                        svc_status = str(svc_config.get('status', 'ON')).upper()
+                                        svc_payout_rate = float(svc_config.get('rate', otp_rate))
+                                    elif svc_config is not None:
+                                        try:
+                                            svc_payout_rate = float(svc_config)
+                                        except ValueError:
+                                            pass
+
+                                    # If status is OFF, user receives exactly 0.00 balance earnings
+                                    if svc_status == 'OFF':
+                                        earned_revenue = 0.00
+                                    else:
+                                        earned_revenue = svc_payout_rate
+
+                                    new_balance = float(user.get('balance', 0.0)) + earned_revenue
                                     fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
                                     
                                     otp_id = "otp_" + secrets.token_hex(8)
@@ -735,7 +753,7 @@ def get_user_allocations():
                                         'service': service,
                                         'otpCode': otp_code,
                                         'message': message,
-                                        'revenue': payout_rate,
+                                        'revenue': earned_revenue,
                                         'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     })
 
@@ -782,14 +800,27 @@ def get_user_allocations():
 @app.route('/api/v1/user/service-rates', methods=['GET'])
 def user_get_service_rates():
     try:
-        rates = fb_db.reference('/settings/service_rates').get() or {
-            'facebook': 0.40,
-            'instagram': 0.40,
-            'whatsapp': 0.40,
-            'telegram': 0.40,
-            'google': 0.40,
-            'generic': 0.40
-        }
+        raw_rates = fb_db.reference('/settings/service_rates').get() or {}
+        default_services = ['facebook', 'instagram', 'whatsapp', 'telegram', 'google', 'generic']
+        rates = {}
+        for svc in default_services:
+            item = raw_rates.get(svc)
+            if isinstance(item, dict):
+                rates[svc] = {
+                    'rate': float(item.get('rate', 0.40)),
+                    'status': str(item.get('status', 'ON')).upper()
+                }
+            else:
+                legacy_val = 0.40
+                if item is not None:
+                    try:
+                        legacy_val = float(item)
+                    except ValueError:
+                        pass
+                rates[svc] = {
+                    'rate': legacy_val,
+                    'status': 'ON'
+                }
         return jsonify({'status': 'success', 'rates': rates})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -933,14 +964,29 @@ def admin_get_service_rates():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        rates = fb_db.reference('/settings/service_rates').get() or {
-            'facebook': 0.40,
-            'instagram': 0.40,
-            'whatsapp': 0.40,
-            'telegram': 0.40,
-            'google': 0.40,
-            'generic': 0.40
-        }
+        raw_rates = fb_db.reference('/settings/service_rates').get() or {}
+        default_services = ['facebook', 'instagram', 'whatsapp', 'telegram', 'google', 'generic']
+        rates = {}
+        
+        for svc in default_services:
+            item = raw_rates.get(svc)
+            if isinstance(item, dict):
+                rates[svc] = {
+                    'rate': float(item.get('rate', 0.40)),
+                    'status': str(item.get('status', 'ON')).upper()
+                }
+            else:
+                legacy_val = 0.40
+                if item is not None:
+                    try:
+                        legacy_val = float(item)
+                    except ValueError:
+                        pass
+                default_status = 'OFF' if svc in ['whatsapp', 'telegram'] else 'ON'
+                rates[svc] = {
+                    'rate': legacy_val,
+                    'status': default_status
+                }
         return jsonify({'status': 'success', 'rates': rates})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -954,8 +1000,17 @@ def admin_set_service_rates():
         rates = data.get('rates', {})
         sanitized_rates = {}
         for k, v in rates.items():
-            sanitized_rates[str(k).strip().lower()] = float(v)
-        
+            svc_name = str(k).strip().lower()
+            if isinstance(v, dict):
+                sanitized_rates[svc_name] = {
+                    'rate': float(v.get('rate', 0.40)),
+                    'status': str(v.get('status', 'ON')).upper()
+                }
+            else:
+                sanitized_rates[svc_name] = {
+                    'rate': float(v),
+                    'status': 'ON'
+                }
         fb_db.reference('/settings/service_rates').set(sanitized_rates)
         return jsonify({'status': 'success', 'message': 'Service payout rates successfully updated', 'rates': sanitized_rates})
     except Exception as e:
@@ -1265,39 +1320,6 @@ def index():
                   </div>
                 </div>
 
-                <!-- Service-wise Active Payout Rates List Card -->
-                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                  <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                    <i class="fa-solid fa-calculator text-[#0088CC]"></i> ACTIVE SERVICE PAYOUT RATES
-                  </h3>
-                  <div class="grid grid-cols-2 md:grid-cols-6 gap-2.5 text-xs text-center">
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Facebook</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.facebook || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Instagram</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.instagram || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">WhatsApp</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.whatsapp || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Telegram</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.telegram || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Google</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.google || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                    <div class="bg-slate-50 border rounded-xl p-2.5">
-                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Generic/Other</span>
-                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.generic || profile?.otp_rate || 0.40).toFixed(2) }}</span>
-                    </div>
-                  </div>
-                </div>
-
                 <!-- SUMMARY CARD: Realtime dynamic aggregation of user activity numbers -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -1484,10 +1506,9 @@ def index():
                   </div>
 
                   <!-- Vertical Columns Layout Chart representation -->
-                  <div class="relative h-48 border-b border-slate-100 flex items-end justify-around pb-2 px-4 gap-4">
+                  <div class="relative h-56 border border-slate-100 bg-slate-50/30 rounded-2xl flex items-end justify-around pb-4 pt-8 px-6 gap-6">
                     <!-- Dashed Lines Grid (Y-Axis references) -->
-                    <div class="absolute inset-x-0 top-0 h-full flex flex-col justify-between pointer-events-none select-none opacity-30">
-                      <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
+                    <div class="absolute inset-x-0 top-0 h-full flex flex-col justify-between pointer-events-none select-none opacity-30 p-4">
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
@@ -1495,14 +1516,13 @@ def index():
                     </div>
 
                     <!-- Column Pillars rendering dynamically -->
-                    <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="relative flex flex-col items-center group w-12 z-10">
-                      <span class="absolute -top-7 bg-slate-800 text-white text-[9px] px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity font-bold">
-                        {{ appItem.count }} OTPs
+                    <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="relative flex flex-col items-center group w-16 z-10 h-full justify-end">
+                      <span class="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded font-black mb-2 shadow-xs">
+                        {{ appItem.count }}
                       </span>
-                      <div :style="{ height: appItem.percentage + '%' }" :class="barColors[idx % 4]" class="w-10 rounded-t-lg transition-all duration-500 relative flex items-end justify-center min-h-[10px]">
-                        <span class="text-[9px] font-black text-white mb-1 select-none">{{ appItem.count }}</span>
+                      <div :style="{ height: Math.max(10, appItem.percentage) + '%' }" :class="barColors[idx % 4]" class="w-8 rounded-t-xl transition-all duration-500 shadow-sm relative flex items-end justify-center">
                       </div>
-                      <span class="text-[9px] font-bold text-slate-400 mt-2 truncate max-w-full block">{{ appItem.name }}</span>
+                      <span class="text-[10px] font-black text-slate-500 mt-2 truncate max-w-full block uppercase tracking-wider">{{ appItem.name }}</span>
                     </div>
                   </div>
 
@@ -1541,10 +1561,10 @@ def index():
                     <div v-for="log in liveLogs" :key="log.range + '_' + log.service + '_' + log.time" @click="copyToClipboard(log.range)" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition duration-300 active:scale-[0.99] space-y-2">
                       <div class="flex justify-between items-center border-b border-slate-100 pb-1.5">
                         <span class="text-xs font-black text-[#0088CC] uppercase tracking-wide">
-                          {{ log.service }}
+                          {{ log.range }}
                         </span>
                         <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
-                          {{ log.country }} (Click to Copy)
+                          {{ log.country }}
                         </span>
                       </div>
                       <div class="space-y-1">
@@ -1752,7 +1772,7 @@ def index():
                     <!-- GET Access status -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">2. Client Access Status</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1775,7 +1795,7 @@ def index():
                     <!-- GET Success logs -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">3. Success OTP logs</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1800,7 +1820,7 @@ def index():
                     <!-- GET Console tracks -->
                     <div class="space-y-2 border-t pt-4">
                       <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
+                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded">GET</span>
                         <h4 class="text-xs font-black text-slate-800">4. Console Tracker signal stream</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1940,12 +1960,12 @@ def index():
 
             // Dynamic active service payout rates list 
             const serviceRates = ref({
-              facebook: 0.40,
-              instagram: 0.40,
-              whatsapp: 0.40,
-              telegram: 0.40,
-              google: 0.40,
-              generic: 0.40
+              facebook: { rate: 0.40, status: 'ON' },
+              instagram: { rate: 0.40, status: 'ON' },
+              whatsapp: { rate: 0.00, status: 'OFF' },
+              telegram: { rate: 0.00, status: 'OFF' },
+              google: { rate: 0.40, status: 'ON' },
+              generic: { rate: 0.40, status: 'ON' }
             });
 
             const playBeep = () => {
@@ -2833,44 +2853,36 @@ def admin_portal():
               <!-- ==================== Tab 6: System Settings & Controls ==================== -->
               <div v-if="currentTab === 'settings'" class="space-y-6">
                 
-                <!-- Service Specific Payout Rates Configuration Dashboard -->
+                <!-- Service Specific Payout Rates & Control Status Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout Rates Configuration (৳)
+                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration (৳)
                   </h3>
                   <p class="text-[10px] text-slate-400 font-semibold leading-relaxed">
-                    Set specific reward payout rates for individual services. If a rate is configured below, users will earn that specific amount for successful OTPs instead of their standard base rate.
+                    Configure the payout rate and active status (ON/OFF) for each service. If a service status is toggled to OFF, users will not receive any balance reward upon OTP hits on that service.
                   </p>
                   
-                  <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs font-bold">
-                    <div>
-                      <label class="text-slate-400">Facebook Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.facebook" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label class="text-slate-400">Instagram Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.instagram" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label class="text-slate-400">WhatsApp Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.whatsapp" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label class="text-slate-400">Telegram Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.telegram" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label class="text-slate-400">Google Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.google" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
-                    </div>
-                    <div>
-                      <label class="text-slate-400">Generic/Other Rate (৳)</label>
-                      <input type="number" step="0.01" v-model="serviceRates.generic" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                  <div class="space-y-3.5">
+                    <div v-for="(svcConfig, svcName) in serviceRates" :key="svcName" class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-150">
+                      <span class="text-xs font-black uppercase text-slate-800 tracking-wide">
+                        {{ svcName }}
+                      </span>
+                      <div class="flex items-center gap-3 w-full sm:w-auto">
+                        <!-- Rate Input -->
+                        <div class="flex items-center bg-white border rounded-xl px-2.5 py-1">
+                          <span class="text-[10px] font-bold text-slate-400 mr-1.5">৳</span>
+                          <input type="number" step="0.01" v-model="svcConfig.rate" class="w-16 text-xs font-black text-slate-800 outline-none" placeholder="0.40" />
+                        </div>
+                        <!-- ON/OFF Status Toggle Button Control -->
+                        <button @click="svcConfig.status = (svcConfig.status === 'ON' ? 'OFF' : 'ON')" :class="svcConfig.status === 'ON' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-rose-600 text-white border-rose-700'" class="px-3.5 py-1.5 rounded-xl text-[10px] font-black border transition select-none tracking-wider">
+                          {{ svcConfig.status === 'ON' ? 'ACTIVE (ON)' : 'MUTED (OFF)' }}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <button @click="saveServiceRates" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs active:scale-95">
-                    Save Service Payout Rates
+                  <button @click="saveServiceRates" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-xs active:scale-95">
+                    Save Service Controls
                   </button>
                 </div>
 
@@ -2945,12 +2957,12 @@ def admin_portal():
 
             // Dynamic service payout rates configurations
             const serviceRates = ref({
-              facebook: 0.40,
-              instagram: 0.40,
-              whatsapp: 0.40,
-              telegram: 0.40,
-              google: 0.40,
-              generic: 0.40
+              facebook: { rate: 0.40, status: 'ON' },
+              instagram: { rate: 0.40, status: 'ON' },
+              whatsapp: { rate: 0.00, status: 'OFF' },
+              telegram: { rate: 0.00, status: 'OFF' },
+              google: { rate: 0.40, status: 'ON' },
+              generic: { rate: 0.40, status: 'ON' }
             });
 
             const stats = ref({
@@ -3139,6 +3151,7 @@ def admin_portal():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("Service payout rates successfully updated! 💰");
+                  fetchDashboardData();
                 } else {
                   alert(data.message);
                 }
