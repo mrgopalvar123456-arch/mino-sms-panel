@@ -43,8 +43,8 @@ elif not firebase_admin._apps:
 # =========================================================================
 # Admin Credentials and Authentication Helpers
 # =========================================================================
-ADMIN_USER = os.environ.get("ADMIN_USERNAME", "Mino420@")
-ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "Mino420@admin")
+ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin123")
 ADMIN_STATIC_TOKEN = f"admin_tkn_{ADMIN_PASS}"
 
 def verify_admin():
@@ -150,6 +150,27 @@ def mask_number(number):
     if length < 8:
         return number
     return f"{number[:6]}****{number[length-3:]}"
+
+# Robust OTP Code Extractor supporting Space, Hyphen (-), and Asterisk (*)
+def extract_otp_code(message):
+    if not message:
+        return "N/A"
+    # Match separated codes (e.g. 749 268, 123-456, 123*456)
+    match_sep = re.search(r'\b\d{2,6}[\s\-*]\d{2,6}\b', message)
+    if match_sep:
+        return match_sep.group(0).strip()
+        
+    # Match standard continuous 4 to 9 digits code
+    match_clean = re.search(r'\b\d{4,9}\b', message)
+    if match_clean:
+        return match_clean.group(0)
+        
+    # Fallback: Find longest numeric group
+    any_digits = re.findall(r'\d+', message)
+    if any_digits:
+        longest = max(any_digits, key=len)
+        return longest[:9]
+    return "N/A"
 
 # Highly Robust Authentication Middleware supporting multiple header formats, JSON parameter inputs and forms
 def get_current_user_optimized():
@@ -320,8 +341,9 @@ def request_withdrawal():
         method = data.get('method', 'TRC20').strip()
         address = data.get('address', '').strip()
         
-        if amount <= 0:
-            return jsonify({'status': 'error', 'message': 'Please enter a valid withdrawal amount.'}), 400
+        # Minimum withdrawal limit set to 50 Taka (৳ 50)
+        if amount < 50:
+            return jsonify({'status': 'error', 'message': 'Minimum withdrawal amount is ৳ 50.'}), 400
         if amount > float(user.get('balance', 0)):
             return jsonify({'status': 'error', 'message': 'Insufficient wallet balance.'}), 400
         if not address:
@@ -710,16 +732,8 @@ def check_number_status():
                         if clean_target in otp_num or otp_num in clean_target:
                             message = otp_item.get('message', '')
                             
-                            # Clean numeric extraction (4 to 9 digit code)
-                            otp_code = ""
-                            match = re.search(r'\b\d{4,9}\b', message)
-                            if match:
-                                otp_code = match.group(0)
-                            else:
-                                any_digits = re.findall(r'\d+', message)
-                                otp_code = max(any_digits, key=len) if any_digits else "N/A"
-                                if len(otp_code) > 9:
-                                    otp_code = otp_code[:9]
+                            # Clean numeric extraction supporting spaces, hyphens, and stars
+                            otp_code = extract_otp_code(message)
                                     
                             matched_alloc['status'] = 'completed'
                             matched_alloc['otp'] = otp_code
@@ -828,19 +842,8 @@ def get_user_allocations():
                             if alloc['status'] == 'active' and (alloc_num in otp_num or otp_num in alloc_num):
                                 message = otp_item.get('message', '')
                                 
-                                # Exact 4 to 9 digits clean matching system
-                                otp_code = ""
-                                match = re.search(r'\b\d{4,9}\b', message)
-                                if match:
-                                    otp_code = match.group(0)
-                                else:
-                                    any_digits = re.findall(r'\d+', message)
-                                    if any_digits:
-                                        otp_code = max(any_digits, key=len)
-                                        if len(otp_code) > 9:
-                                            otp_code = otp_code[:9]
-                                    else:
-                                        otp_code = "N/A"
+                                # Exact extraction with spaces, hyphens, and stars support
+                                otp_code = extract_otp_code(message)
 
                                 service = 'generic'
                                 msg_lower = message.lower()
@@ -1783,12 +1786,12 @@ def index():
                   <h3 class="font-black text-xs text-slate-800 flex items-center gap-2">
                     <i class="fa-solid fa-hand-holding-dollar text-emerald-600"></i> Withdraw Request
                   </h3>
-                  <p class="text-[11px] text-slate-400 leading-relaxed font-semibold">Request a withdrawal of your earnings to your saved wallet address.</p>
+                  <p class="text-[11px] text-slate-400 leading-relaxed font-semibold">Request a withdrawal of your earnings to your saved wallet address (Minimum: ৳ 50).</p>
                   
                   <div class="grid sm:grid-cols-2 gap-3 text-xs font-bold">
                     <div>
                       <label class="text-slate-400">Withdraw Amount (৳)</label>
-                      <input type="number" step="1" v-model="withdrawAmount" placeholder="e.g., 50" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                      <input type="number" step="1" v-model="withdrawAmount" placeholder="Min 50 ৳" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
                     </div>
                     <div>
                       <label class="text-slate-400">Payment Method</label>
@@ -1803,7 +1806,7 @@ def index():
                     <div class="text-[11px] font-bold text-slate-500">
                       Destination Address: <span class="text-[#0088CC] font-mono select-all">{{ user?.wallet_address || 'Please set a wallet address first.' }}</span>
                     </div>
-                    <button @click="submitWithdrawal" :disabled="!user?.wallet_address || withdrawAmount <= 0" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-6 py-3 rounded-xl text-xs transition flex items-center gap-1.5 disabled:bg-slate-200 shadow-sm active:scale-95">
+                    <button @click="submitWithdrawal" :disabled="!user?.wallet_address || withdrawAmount < 50" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-6 py-3 rounded-xl text-xs transition flex items-center gap-1.5 disabled:bg-slate-200 shadow-sm active:scale-95">
                       <i class="fa-solid fa-paper-plane"></i> Submit Request
                     </button>
                   </div>
@@ -1926,79 +1929,10 @@ def index():
 }</pre>
                     </div>
 
-                    <!-- GET Success logs -->
-                    <div class="space-y-2 border-t pt-4">
-                      <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
-                        <h4 class="text-xs font-black text-slate-800">3. Success OTP logs</h4>
-                      </div>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
-                        {{ apiBaseUrl }}/@public/api/success-otp?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
-                      </div>
-                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
-                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
-  "status": "success",
-  "data": [
-    {
-      "number": "+2250789538803",
-      "service": "facebook",
-      "otp_code": "972450",
-      "message": "Your Facebook code is 972450",
-      "revenue_earned": 0.40,
-      "created_at": "2026-06-22T10:10:05.123Z"
-    }
-  ]
-}</pre>
-                    </div>
-
-                    <!-- GET Console tracks -->
-                    <div class="space-y-2 border-t pt-4">
-                      <div class="flex items-center gap-2">
-                        <span class="bg-emerald-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET</span>
-                        <h4 class="text-xs font-black text-slate-800">4. Console Tracker signal stream</h4>
-                      </div>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
-                        {{ apiBaseUrl }}/@public/api/console?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
-                      </div>
-                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
-                      <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
-  "status": "success",
-  "data": [
-    {
-      "range": "2250789XXX",
-      "service": "FACEBOOK",
-      "message": "Signal intercepted on range 2250789XXX for FACEBOOK",
-      "time": 1782099243663,
-      "country": "Ivory Coast"
-    }
-  ]
-}</pre>
-                    </div>
-
-                    <!-- GET/POST Check Status -->
-                    <div class="space-y-2 border-t pt-4">
-                      <div class="flex items-center gap-2">
-                        <span class="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET/POST</span>
-                        <h4 class="text-xs font-black text-slate-800">5. Check Number Status (Bot Friendly API)</h4>
-                      </div>
-                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
-                        {{ apiBaseUrl }}/@public/api/check?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&number=+2250789538803
-                      </div>
-                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
-                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
-  "status": "success",
-  "number": "+2250789538803",
-  "allocation_status": "completed",
-  "otp_code": "972450",
-  "full_sms": "Your Facebook code is 972450",
-  "created_at": "2026-06-22T10:10:05.123Z"
-}</pre>
-                    </div>
-
                   </div>
                 </div>
 
-                <!-- Live API Tester -->
+                <!-- Live API Tester (Do Not Delete) -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="text-xs font-black text-slate-800 flex items-center gap-2">
                     <i class="fa-solid fa-flask text-[#0088CC]"></i> Live API Tester
@@ -2113,10 +2047,12 @@ def index():
               generic: { rate: 0.40, status: 'ON' }
             });
 
-            // Fallback parsing engine for extracting digits in historical/bugged database records
+            // Fallback parsing engine for extracting digits supporting space/hyphen/asterisk
             const displayOtp = (alloc) => {
               if (!alloc.otp) return 'N/A';
               if (alloc.otp === 'SUCCESS' && alloc.message) {
+                const matchSep = alloc.message.match(/\\b\\d{2,6}[\\s\\-*]\\d{2,6}\\b/);
+                if (matchSep) return matchSep[0];
                 const match = alloc.message.match(/\\b\\d{4,9}\\b/);
                 if (match) return match[0];
                 const anyDigits = alloc.message.match(/\\d+/g);
@@ -2437,7 +2373,7 @@ def index():
 
             const submitWithdrawal = async () => {
               const token = localStorage.getItem('mino_session_token');
-              if (!token || withdrawAmount.value <= 0) return;
+              if (!token || withdrawAmount.value < 50) return;
               try {
                 const res = await fetch('/api/v1/user/withdraw', {
                   method: 'POST',
