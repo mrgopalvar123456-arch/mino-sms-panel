@@ -140,8 +140,9 @@ def parse_iso_datetime(dt_str):
         except Exception:
             return datetime.datetime.now(datetime.timezone.utc)
 
-STEX_API_KEY = os.environ.get("STEX_API_KEY", "M9JBBKWUL33")
-STEX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api"
+# voltxsms Configuration
+VOLTX_API_KEY = os.environ.get("VOLTX_API_KEY", "M9JBBKWUL33")
+VOLTX_BASE_URL = "https://api.2oo9.cloud/MXS47FLFX0U/tnevs/@public/api"
 
 def mask_number(number):
     if not number:
@@ -472,40 +473,40 @@ def getnum():
 
         clean_rid = str(rid).upper().replace('X', '').strip()
         user_id = user['uid']
-        stex_data = None
+        voltx_data = None
         last_error = "No number available on this range"
 
         try:
             params = {'rid': clean_rid, 'national': int(national), 'remove_plus': int(remove_plus)}
-            res = requests.get(f"{STEX_BASE_URL}/getnum", params=params, headers={'mauthapi': STEX_API_KEY}, timeout=4)
+            res = requests.get(f"{VOLTX_BASE_URL}/getnum", params=params, headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
             if res.status_code == 200:
                 json_res = res.json()
                 meta = json_res.get('meta', {})
                 if meta.get('status') == 'ok' or meta.get('code') == 200:
-                    stex_data = json_res
+                    voltx_data = json_res
                 else:
                     last_error = json_res.get('message') or json_res.get('msg') or last_error
         except Exception as e:
             print("GET Attempt Failed:", e)
 
-        if not stex_data:
+        if not voltx_data:
             try:
                 payload = {'rid': clean_rid, 'national': int(national), 'remove_plus': int(remove_plus)}
-                res = requests.post(f"{STEX_BASE_URL}/getnum", json=payload, headers={'mauthapi': STEX_API_KEY}, timeout=4)
+                res = requests.post(f"{VOLTX_BASE_URL}/getnum", json=payload, headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
                 if res.status_code == 200:
                     json_res = res.json()
                     meta = json_res.get('meta', {})
                     if meta.get('status') == 'ok' or meta.get('code') == 200:
-                        stex_data = json_res
+                        voltx_data = json_res
                     else:
                         last_error = json_res.get('message') or json_res.get('msg') or last_error
             except Exception as e:
                 print("POST JSON Attempt Failed:", e)
 
-        if not stex_data:
+        if not voltx_data:
             return jsonify({'status': 'error', 'message': last_error}), 400
 
-        data_payload = stex_data.get('data', {})
+        data_payload = voltx_data.get('data', {})
         number = data_payload.get('full_number') or data_payload.get('national_number') or data_payload.get('no_plus_number')
         country = data_payload.get('country', 'Guinea')
         operator = data_payload.get('operator', 'Mobile')
@@ -542,7 +543,7 @@ def getnum():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 2. Live Access Status API (GET only - Returns EXACTLY and ONLY the real-time STEX raw JSON format)
+# 2. Live Access Status API (GET only - Returns EXACTLY and ONLY the real-time voltxsms raw JSON format)
 @app.route('/@public/api/liveaccess', methods=['GET'])
 def liveaccess():
     user = get_current_user_optimized()
@@ -550,14 +551,14 @@ def liveaccess():
         return jsonify({'status': 'error', 'message': 'Access Denied. Invalid or Missing API credentials.'}), 402
     
     try:
-        # Dynamic proxy to return the exact raw response format of the STEX backend
-        res = requests.get(f"{STEX_BASE_URL}/liveaccess", headers={'mauthapi': STEX_API_KEY}, timeout=4)
+        # Dynamic proxy to return the exact raw response format of the voltxsms backend
+        res = requests.get(f"{VOLTX_BASE_URL}/liveaccess", headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
         if res.status_code == 200:
             return Response(res.text, mimetype='application/json')
         else:
             return Response(res.text, status=res.status_code, mimetype='application/json')
     except Exception as e:
-        return jsonify({'status': 'error', 'message': f'STEX Live Access fetch failed: {str(e)}'}), 500
+        return jsonify({'status': 'error', 'message': f'VoltxSMS Live Access fetch failed: {str(e)}'}), 500
 
 # 3. Successful OTP Reports API (GET only)
 @app.route('/@public/api/success-otp', methods=['GET'])
@@ -597,21 +598,21 @@ def get_live_console():
         if not user:
             return jsonify({'status': 'error', 'message': 'Invalid API Key or Unauthorized access.'}), 402
 
-        res = requests.get(f"{STEX_BASE_URL}/console", headers={'mauthapi': STEX_API_KEY}, timeout=4)
+        res = requests.get(f"{VOLTX_BASE_URL}/console", headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
         if res.status_code == 200:
-            stex_data = res.json()
+            voltx_data = res.json()
             hits = []
             
-            if isinstance(stex_data, list):
-                hits = stex_data
-            elif isinstance(stex_data, dict):
-                data_obj = stex_data.get('data')
+            if isinstance(voltx_data, list):
+                hits = voltx_data
+            elif isinstance(voltx_data, dict):
+                data_obj = voltx_data.get('data')
                 if isinstance(data_obj, dict):
                     hits = data_obj.get('hits', []) or data_obj.get('ranges', [])
                 elif isinstance(data_obj, list):
                     hits = data_obj
                 else:
-                    hits = stex_data.get('hits', []) or stex_data.get('ranges', [])
+                    hits = voltx_data.get('hits', []) or voltx_data.get('ranges', [])
             
             data = []
             for hit in hits:
@@ -655,7 +656,7 @@ def get_live_console():
                         })
             return jsonify({'status': 'success', 'data': data})
     except Exception as e:
-        print("STEX Console API Error:", e)
+        print("VoltxSMS Console API Error:", e)
     return jsonify({'status': 'success', 'data': []})
 
 # 5. Check Single Number Status (Extremely Useful for Telegram Bots and Integrations)
@@ -700,7 +701,7 @@ def check_number_status():
         # Real-time Background sync update fallback during query
         if matched_alloc.get('status') == 'active':
             try:
-                res = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=3)
+                res = requests.get(f"{VOLTX_BASE_URL}/success-otp", headers={'mauthapi': VOLTX_API_KEY}, timeout=3)
                 if res.status_code == 200:
                     json_data = res.json()
                     otps = json_data.get('data', {}).get('otps', [])
@@ -814,7 +815,7 @@ def get_user_allocations():
         service_rates = {k.lower(): v for k, v in service_rates.items()}
 
         try:
-            res = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=4)
+            res = requests.get(f"{VOLTX_BASE_URL}/success-otp", headers={'mauthapi': VOLTX_API_KEY}, timeout=4)
             if res.status_code == 200:
                 json_data = res.json()
                 meta = json_data.get('meta', {})
@@ -1310,7 +1311,7 @@ def index():
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
-                <span class="text-lg font-black text-slate-950">MINO SMS</span>
+                <span class="text-lg font-black text-slate-955">MINO SMS</span>
               </div>
 
               <nav class="flex-1 p-4 space-y-1">
@@ -2289,7 +2290,7 @@ def index():
                   mergeLogs(consoleData.data);
                 }
               } catch (e) {
-                console.log("Console Sync Error:", e);
+                console.log("VoltxSMS Console Sync Error:", e);
               }
             };
 
@@ -2692,7 +2693,7 @@ def admin_portal():
             
             <!-- Sidebar -->
             <aside class="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
-              <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
+              <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-955">
                 <span class="px-2 py-0.5 bg-rose-600 rounded text-white font-black text-xs">ADMIN</span>
                 <span class="text-md font-black text-white">MINO SMS</span>
               </div>
@@ -2718,7 +2719,7 @@ def admin_portal():
                 </button>
               </nav>
 
-              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950 text-xs font-bold">
+              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-955 text-xs font-bold">
                 <span>ADMIN PORTAL</span>
                 <button @click="logOut" class="text-rose-400 hover:text-rose-600 font-black"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
               </div>
@@ -3071,7 +3072,7 @@ def admin_portal():
                         <li><strong>Rule 15:</strong> Password override structures active on backend user structures.</li>
                         <li><strong>Rule 16:</strong> Automatic database backup generators and sync loops.</li>
                         <li><strong>Rule 17:</strong> Global maintenance status checks enabled on before_request scopes.</li>
-                        <li><strong>Rule 18:</strong> Signal Intercept radars mapped to STEX streams.</li>
+                        <li><strong>Rule 18:</strong> Signal Intercept radars mapped to VOLTX streams.</li>
                         <li><strong>Rule 19:</strong> Safe environment private credentials decoded during start cycles.</li>
                         <li><strong>Rule 20:</strong> Dynamic 18-minute allocation countdown timer actively enforced.</li>
                       </ul>
