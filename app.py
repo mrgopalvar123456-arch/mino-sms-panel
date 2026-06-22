@@ -153,6 +153,7 @@ def mask_number(number):
     return f"{number[:6]}****{number[length-3:]}"
 
 # Highly Robust Authentication Middleware supporting multiple header formats, JSON parameter inputs and forms
+# Note: Users authenticating via API Key MUST have an approved API key (api_key_approved is True)
 def get_current_user_optimized():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -181,13 +182,13 @@ def get_current_user_optimized():
             query = users_ref.order_by_child('api_key').equal_to(api_key).get()
             if query and isinstance(query, dict):
                 for u_data in query.values():
-                    if u_data.get('status', 'pending') == 'approved':
+                    if u_data.get('status', 'pending') == 'approved' and u_data.get('api_key_approved', False) is True:
                         return u_data
         except Exception:
             all_users = users_ref.get() or {}
             if isinstance(all_users, dict):
                 for u_data in all_users.values():
-                    if u_data.get('api_key') == api_key and u_data.get('status', 'pending') == 'approved':
+                    if u_data.get('api_key') == api_key and u_data.get('status', 'pending') == 'approved' and u_data.get('api_key_approved', False) is True:
                         return u_data
     return None
 
@@ -223,6 +224,7 @@ def register():
             'email': email,
             'password': password,
             'api_key': '',
+            'api_key_approved': False,
             'balance': 0.00,
             'otp_rate': 0.40,
             'wallet_address': '', 
@@ -275,6 +277,7 @@ def get_me():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# Generate API Key: Requires Admin approval to set active (api_key_approved = True)
 @app.route('/api/v1/user/generate-key', methods=['POST'])
 def generate_api_key():
     try:
@@ -283,12 +286,21 @@ def generate_api_key():
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 402
         
         user_id = user['uid']
-        if not user.get('api_key'):
-            unique_key = 'mino_live_' + secrets.token_hex(16)
-            fb_db.reference(f'/users/{user_id}/api_key').set(unique_key)
-            return jsonify({'status': 'success', 'message': 'API Key generated', 'api_key': unique_key})
-        else:
-            return jsonify({'status': 'success', 'message': 'API Key already exists', 'api_key': user['api_key']})
+        api_key_approved = user.get('api_key_approved', False)
+        existing_key = user.get('api_key')
+        
+        if existing_key and not api_key_approved:
+            return jsonify({'status': 'success', 'message': 'API Key generated but pending administrator approval.', 'api_key': existing_key, 'api_key_approved': False})
+        elif existing_key and api_key_approved:
+            return jsonify({'status': 'success', 'message': 'Approved API Key already exists.', 'api_key': existing_key, 'api_key_approved': True})
+        
+        unique_key = 'mino_live_' + secrets.token_hex(16)
+        updates = {
+            'api_key': unique_key,
+            'api_key_approved': False
+        }
+        fb_db.reference(f'/users/{user_id}').update(updates)
+        return jsonify({'status': 'success', 'message': 'API Key generated. Awaiting administrator approval.', 'api_key': unique_key, 'api_key_approved': False})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -446,6 +458,7 @@ def get_leaderboard():
 # =========================================================================
 
 # 1. Booking API (Supports GET and POST, robust parameter parser)
+# Enforces 12-second cooldown rate limits for users without approved API Key.
 @app.route('/@public/api/getnum', methods=['POST', 'GET'])
 @app.route('/api/v1/getnum', methods=['POST', 'GET'])
 def getnum():
@@ -471,8 +484,30 @@ def getnum():
         if not rid:
             return jsonify({'status': 'error', 'message': 'Range ID missing'}), 400
 
-        clean_rid = str(rid).upper().replace('X', '').strip()
         user_id = user['uid']
+        
+        # 12-second Rate Limit Check for users without approved API Key
+        api_key_approved = user.get('api_key_approved', False)
+        if not api_key_approved:
+            last_booking_str = user.get('last_booking_time')
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if last_booking_str:
+                try:
+                    last_booking = parse_iso_datetime(last_booking_str)
+                    elapsed = (now - last_booking).total_seconds()
+                    if elapsed < 12.0:
+                        remaining = round(12.0 - elapsed, 1)
+                        return jsonify({
+                            'status': 'error', 
+                            'message': f'Rate limit cooldown: Please wait {remaining} seconds before requesting a new number.'
+                        }), 429
+                except Exception as ex:
+                    print("Cooldown parser error:", ex)
+            
+            # Update last booking timestamp
+            fb_db.reference(f'/users/{user_id}/last_booking_time').set(now.isoformat())
+
+        clean_rid = str(rid).upper().replace('X', '').strip()
         voltx_data = None
         last_error = "No number available on this range"
 
@@ -1047,6 +1082,8 @@ def admin_api_user_update():
             updates['wallet_address'] = str(data['wallet_address']).strip()
         if 'api_key' in data:
             updates['api_key'] = str(data['api_key']).strip()
+        if 'api_key_approved' in data:
+            updates['api_key_approved'] = bool(data['api_key_approved'])
         if 'password' in data:
             updates['password'] = str(data['password']).strip()
             
@@ -1843,8 +1880,14 @@ def index():
                         <span class="text-slate-800 font-mono text-[10px] bg-slate-50 px-3 py-2 rounded border break-all select-all">
                           {{ profile.api_key }}
                         </span>
-                        <div class="flex gap-2">
-                          <button @click="copyToClipboard(profile.api_key)" class="bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition flex items-center gap-1">
+                        <div class="flex flex-col gap-1.5">
+                          <span v-if="profile.api_key_approved" class="text-emerald-600 text-[10px] font-bold">
+                            <i class="fa-solid fa-circle-check"></i> API Key Approved (Unlimited booking rate-limit)
+                          </span>
+                          <span v-else class="text-amber-600 text-[10px] font-bold animate-pulse">
+                            <i class="fa-solid fa-clock"></i> API Key Pending Admin Approval (12s cooldown applies)
+                          </span>
+                          <button v-if="profile.api_key_approved" @click="copyToClipboard(profile.api_key)" class="bg-[#0088CC]/10 text-[#0088CC] font-bold px-3 py-1.5 rounded-xl text-[10px] hover:bg-[#0088CC]/20 transition flex items-center gap-1 w-max">
                             Copy API Key <i class="fa-solid fa-copy"></i>
                           </button>
                         </div>
@@ -2425,7 +2468,7 @@ def index():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast("API Access Key generated! ✅");
+                  triggerToast(data.message);
                   fetchGeneralData();
                 } else {
                   alert(data.message);
@@ -2678,7 +2721,7 @@ def admin_portal():
                 </div>
                 <div>
                   <label class="text-xs font-bold text-slate-500">Admin Password</label>
-                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border-rose-600 transition outline-none" />
+                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-rose-600 transition outline-none" />
                 </div>
 
                 <button type="submit" :disabled="authLoading" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
@@ -2693,7 +2736,7 @@ def admin_portal():
             
             <!-- Sidebar -->
             <aside class="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
-              <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-955">
+              <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
                 <span class="px-2 py-0.5 bg-rose-600 rounded text-white font-black text-xs">ADMIN</span>
                 <span class="text-md font-black text-white">MINO SMS</span>
               </div>
@@ -2719,7 +2762,7 @@ def admin_portal():
                 </button>
               </nav>
 
-              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-955 text-xs font-bold">
+              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950 text-xs font-bold">
                 <span>ADMIN PORTAL</span>
                 <button @click="logOut" class="text-rose-400 hover:text-rose-600 font-black"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
               </div>
@@ -2795,13 +2838,14 @@ def admin_portal():
                           <th class="p-4">Email & Credentials</th>
                           <th class="p-4">Balance</th>
                           <th class="p-4">OTP Rate (৳)</th>
+                          <th class="p-4">API Key Status</th>
                           <th class="p-4">Status</th>
                           <th class="p-4 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
                         <tr v-if="filteredUsers.length === 0">
-                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">No users match your criteria.</td>
+                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No users match your criteria.</td>
                         </tr>
                         <tr v-else-if="filteredUsers" v-for="u in filteredUsers" :key="u.uid" class="hover:bg-slate-50/50 transition">
                           <td class="p-4">
@@ -2815,6 +2859,11 @@ def admin_portal():
                           </td>
                           <td class="p-4 font-black text-slate-900 text-sm">৳ {{ parseFloat(u.balance || 0).toFixed(2) }}</td>
                           <td class="p-4 font-black text-slate-700 text-xs">৳ {{ parseFloat(u.otp_rate || 0.40).toFixed(2) }}</td>
+                          <td class="p-4 font-black">
+                            <span v-if="u.api_key_approved" class="text-emerald-600 text-[10px] font-black uppercase"><i class="fa-solid fa-check-double"></i> Approved</span>
+                            <span v-else-if="u.api_key" class="text-amber-600 text-[10px] font-black uppercase animate-pulse"><i class="fa-solid fa-circle-question"></i> Pending Approve</span>
+                            <span v-else class="text-slate-400 text-[10px] font-bold">No Key Generated</span>
+                          </td>
                           <td class="p-4">
                             <span v-if="u.status === 'approved'" class="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Approved</span>
                             <span v-else-if="u.status === 'pending'" class="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Pending</span>
@@ -2860,6 +2909,13 @@ def admin_portal():
                         <input type="text" v-model="editUser.api_key" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none font-mono focus:border-rose-600" />
                       </div>
                       <div>
+                        <label class="text-slate-400">API Key Approved Status</label>
+                        <select v-model="editUser.api_key_approved" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600">
+                          <option :value="true">Approved (Active Key)</option>
+                          <option :value="false">Pending Approval (Disabled)</option>
+                        </select>
+                      </div>
+                      <div>
                         <label class="text-slate-400">Account Authorization Status</label>
                         <select v-model="editUser.status" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600">
                           <option value="approved">Approved (Active)</option>
@@ -2898,7 +2954,7 @@ def admin_portal():
                         <tr v-if="withdrawals.length === 0">
                           <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No withdrawal requests found.</td>
                         </tr>
-                        <tr v-else v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
+                        <tr v-else-if="withdrawals" v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
                           <td class="p-4">
                             <p class="font-black text-slate-900 text-sm">{{ wd.userName }}</p>
                             <p class="text-[10px] text-slate-400 mt-0.5">{{ wd.userEmail }}</p>
@@ -3105,7 +3161,7 @@ def admin_portal():
 
             const serviceRates = ref({
               facebook: { rate: 0.40, status: 'ON' },
-              instagram: { rate: 0.40, status: 'ON' },
+              indigo: { rate: 0.40, status: 'ON' },
               whatsapp: { rate: 0.00, status: 'OFF' },
               telegram: { rate: 0.00, status: 'OFF' },
               google: { rate: 0.40, status: 'ON' },
