@@ -1800,16 +1800,19 @@ def index():
 
             const showToast = ref(false);
             const toastMessage = ref('');
-            let pollingTimer = null;
+            
+            // Dedicated Polling Timers for Performance Tuning
+            let generalTimer = null;
+            let consoleTimer = null;
 
-            // Live Test Lab Variables (Interactive dropdown mapping added for testing all 4 APIs)
+            // Live Test Lab Variables
             const selectedTestApi = ref('getnum');
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
             const apiBaseUrl = ref(window.location.origin);
 
-            // Chart bar indicator configurations matching column indicators in design representation
+            // Chart colors configuration
             const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
             const dotColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
 
@@ -1912,14 +1915,24 @@ def index():
 
             const startPolling = () => {
               stopPolling();
-              fetchData();
-              pollingTimer = setInterval(fetchData, 3000); 
+              
+              // Run initial fetch immediately
+              fetchGeneralData();
+              fetchConsoleData();
+              
+              // Set up separate polling intervals
+              generalTimer = setInterval(fetchGeneralData, 5000); // 5 seconds for general data (safe DB quota)
+              consoleTimer = setInterval(fetchConsoleData, 2000); // 2 seconds for high performance logs update
             };
 
             const stopPolling = () => {
-              if (pollingTimer) {
-                clearInterval(pollingTimer);
-                pollingTimer = null;
+              if (generalTimer) {
+                clearInterval(generalTimer);
+                generalTimer = null;
+              }
+              if (consoleTimer) {
+                clearInterval(consoleTimer);
+                consoleTimer = null;
               }
             };
 
@@ -1967,7 +1980,25 @@ def index():
               return { list: list.slice(0, 4), total };
             });
 
-            const fetchData = async () => {
+            // Dedicated Console Signal Fetching (Runs every 2 seconds)
+            const fetchConsoleData = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) return;
+              try {
+                const consoleRes = await fetch('/api/v1/live-console', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const consoleData = await consoleRes.json();
+                if (consoleData.status === 'success') {
+                  mergeLogs(consoleData.data);
+                }
+              } catch (e) {
+                console.log("Console Sync Error:", e);
+              }
+            };
+
+            // Dedicated General User Details Fetching (Runs every 5 seconds)
+            const fetchGeneralData = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token) {
                 userLoaded.value = true;
@@ -2026,18 +2057,7 @@ def index():
                 } catch (e) {}
               }
 
-              // 3. Fetch Signal Tracker Logs (Bearer Token Mapped to secure endpoint calls)
-              try {
-                const consoleRes = await fetch('/api/v1/live-console', {
-                  headers: { 'Authorization': `Bearer ${token}` }
-                });
-                const consoleData = await consoleRes.json();
-                if (consoleData.status === 'success') {
-                  mergeLogs(consoleData.data);
-                }
-              } catch (e) {}
-
-              // 4. Fetch Dashboard OTP Report data
+              // 3. Fetch Dashboard OTP Report data
               if (profile.value) {
                 try {
                   const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''), {
@@ -2050,7 +2070,7 @@ def index():
                 } catch (e) {}
               }
 
-              // 5. Fetch Leaderboard Ratings (Bearer Token Mapped to secure endpoint calls)
+              // 4. Fetch Leaderboard Ratings
               try {
                 const boardRes = await fetch('/api/v1/leaderboard', {
                   headers: { 'Authorization': `Bearer ${token}` }
@@ -2081,7 +2101,7 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("Wallet address successfully configured! ✅");
-                  fetchData();
+                  fetchGeneralData();
                 } else {
                   alert(data.message);
                 }
@@ -2106,7 +2126,7 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("API Access Key generated! ✅");
-                  fetchData();
+                  fetchGeneralData();
                 } else {
                   alert(data.message);
                 }
@@ -2136,7 +2156,7 @@ def index():
                 if (data.status === 'success') {
                   alert("Your withdrawal request has been submitted.");
                   withdrawAmount.value = '';
-                  fetchData();
+                  fetchGeneralData();
                 } else {
                   alert(data.message);
                 }
@@ -2145,7 +2165,6 @@ def index():
               }
             };
 
-            // Dynamic test script targeting selected APIs dynamically
             const runLiveApiTest = async () => {
               if (!profile.value?.api_key) {
                 alert("Please generate an API Key first.");
@@ -2156,7 +2175,6 @@ def index():
               try {
                 let url = '';
                 if (selectedTestApi.value === 'getnum') {
-                  // Mapped to secure POST booking endpoint simulation
                   const postRes = await fetch(`/@public/api/getnum`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2259,7 +2277,7 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("Number successfully allocated!");
-                  fetchData(); 
+                  fetchGeneralData(); 
                 } else {
                   alert(data.message);
                 }
