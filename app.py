@@ -605,30 +605,56 @@ def get_live_console():
             if isinstance(stex_data, list):
                 hits = stex_data
             elif isinstance(stex_data, dict):
-                hits = stex_data.get('data', [])
-                if isinstance(hits, dict):
-                    hits = hits.get('hits', []) or hits.get('ranges', [])
-                if not hits and 'hits' in stex_data:
-                    hits = stex_data.get('hits', [])
+                data_obj = stex_data.get('data')
+                if isinstance(data_obj, dict):
+                    hits = data_obj.get('hits', []) or data_obj.get('ranges', [])
+                elif isinstance(data_obj, list):
+                    hits = data_obj
+                else:
+                    hits = stex_data.get('hits', []) or stex_data.get('ranges', [])
             
             data = []
             for hit in hits:
                 if not isinstance(hit, dict):
                     continue
+                
+                msg = hit.get('message') or hit.get('msg')
+                single_range = hit.get('range')
                 sid = hit.get('sid', 'Global')
-                last_at = hit.get('last_at', 0)
-                ranges = hit.get('ranges', [])
-                if not isinstance(ranges, list):
-                    continue
-                for r in ranges:
-                    c_name = get_country_from_range(r)
+                time_val = hit.get('time') or hit.get('last_at') or 0
+                
+                if single_range and msg:
+                    # Single Range Format (as shown in STEX SMS API response screenshot)
+                    c_name = get_country_from_range(single_range)
                     data.append({
-                        'range': r,
+                        'range': single_range,
                         'service': sid,
-                        'message': f"Signal intercepted on range {r} for {sid}",
-                        'time': last_at,
+                        'message': msg,
+                        'time': time_val,
                         'country': c_name
                     })
+                else:
+                    # Fallback for alternative array-based ranges format
+                    ranges = hit.get('ranges', [])
+                    if isinstance(ranges, list):
+                        for r in ranges:
+                            c_name = get_country_from_range(r)
+                            data.append({
+                                'range': r,
+                                'service': sid,
+                                'message': f"Signal intercepted on range {r} for {sid}",
+                                'time': time_val,
+                                'country': c_name
+                            })
+                    elif isinstance(ranges, str):
+                        c_name = get_country_from_range(ranges)
+                        data.append({
+                            'range': ranges,
+                            'service': sid,
+                            'message': f"Signal intercepted on range {ranges} for {sid}",
+                            'time': time_val,
+                            'country': c_name
+                        })
             return jsonify({'status': 'success', 'data': data})
     except Exception as e:
         print("STEX Console API Error:", e)
@@ -2814,8 +2840,8 @@ def admin_portal():
               } catch (e) {
                 alert("Server connection failed.");
               }
-              authLoading.value = false;
-            };
+                  authLoading.value = false;
+                };
 
             const logOut = () => {
               localStorage.removeItem('mino_admin_token');
