@@ -151,7 +151,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# Highly Optimized Authentication Middleware with Strict Verification Protection
+# Highly Optimized Authentication Middleware with Silent JSON Checks to Prevent 415 Errors
 def get_current_user_optimized():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -162,11 +162,14 @@ def get_current_user_optimized():
             return user
 
     api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
-    if not api_key and request.is_json:
-        try:
-            api_key = request.json.get('api_key')
-        except Exception:
-            pass
+    if not api_key:
+        if request.is_json:
+            try:
+                # Using silent parameter extraction to safely handle missing Content-Type headers
+                data = request.get_json(silent=True) or {}
+                api_key = data.get('api_key')
+            except Exception:
+                pass
             
     if api_key:
         users_ref = fb_db.reference('/users')
@@ -190,7 +193,7 @@ def get_current_user_optimized():
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         email = data.get('email')
         password = data.get('password')
         name = data.get('name', '').strip()
@@ -232,7 +235,7 @@ def register():
 @app.route('/api/v1/auth/login', methods=['POST'])
 def login():
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         email = data.get('email')
         password = data.get('password')
 
@@ -292,7 +295,7 @@ def update_wallet():
         if not user:
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 402
         
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         wallet_address = data.get('wallet_address', '').strip()
         
         user_id = user['uid']
@@ -309,7 +312,7 @@ def request_withdrawal():
         if not user:
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 402
         
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         amount = float(data.get('amount', 0))
         method = data.get('method', 'TRC20').strip()
         address = data.get('address', '').strip()
@@ -438,16 +441,25 @@ def get_leaderboard():
 # Public API Endpoints (GET & POST - Secured with 402 Error Code blocks)
 # =========================================================================
 
-# 1. Booking API (POST requested)
+# 1. Booking API (POST requested, optimized to completely bypass 415 header issues)
 @app.route('/@public/api/getnum', methods=['POST'])
 @app.route('/api/v1/getnum', methods=['POST', 'GET'])
 def getnum():
     try:
-        # Check params from both JSON and args
-        data = request.json or request.form or {}
-        rid = data.get('rid') or request.args.get('rid')
-        national = data.get('national', '1') or request.args.get('national', '1')
-        remove_plus = data.get('remove_plus', '1') or request.args.get('remove_plus', '1')
+        # Checking JSON securely with fallback parameters representation to avoid 415 aborts
+        data = {}
+        if request.is_json:
+            try:
+                data = request.get_json(silent=True) or {}
+            except Exception:
+                pass
+                
+        form_data = request.form or {}
+        args_data = request.args or {}
+        
+        rid = data.get('rid') or form_data.get('rid') or args_data.get('rid')
+        national = data.get('national') or form_data.get('national') or args_data.get('national') or '1'
+        remove_plus = data.get('remove_plus') or form_data.get('remove_plus') or args_data.get('remove_plus') or '1'
 
         user = get_current_user_optimized()
         if not user:
@@ -747,7 +759,7 @@ def resource_not_found(e):
 @app.route('/api/v1/admin/login', methods=['POST'])
 def admin_api_login():
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         username = data.get('username')
         password = data.get('password')
         if username == ADMIN_USER and password == ADMIN_PASS:
@@ -803,7 +815,7 @@ def admin_api_user_update():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         uid = data.get('uid')
         if not uid:
             return jsonify({'status': 'error', 'message': 'User ID is required'}), 400
@@ -834,7 +846,7 @@ def admin_api_user_delete():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         uid = data.get('uid')
         if not uid:
             return jsonify({'status': 'error', 'message': 'User ID is required'}), 400
@@ -849,7 +861,7 @@ def admin_api_toggle_maintenance():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         val = bool(data.get('maintenance_mode', False))
         fb_db.reference('/settings/maintenance_mode').set(val)
         return jsonify({'status': 'success', 'maintenance_mode': val})
@@ -861,7 +873,7 @@ def admin_api_announcement():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         msg = data.get('announcement', '').strip()
         fb_db.reference('/settings/announcement').set(msg)
         return jsonify({'status': 'success', 'message': 'Announcement updated'})
@@ -885,7 +897,7 @@ def admin_withdrawal_action():
     if not verify_admin():
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
     try:
-        data = request.json or {}
+        data = request.get_json(silent=True) or {}
         wd_id = data.get('id')
         action = data.get('action') 
         
@@ -2725,7 +2737,985 @@ def admin_portal():
       </div>
 
       <script>
-        const { createApp, ref, onMounted, computed } = Vue;
+        const { createApp, ref, onMounted, watch, computed } = Vue;
+
+        createApp({
+          setup() {
+            const userLoaded = ref(false); 
+            const user = ref(null);
+            const profile = ref(null);
+            const authName = ref('');
+            const authEmail = ref('');
+            const authPassword = ref('');
+            const isRegistering = ref(false);
+            const authLoading = ref(false);
+
+            const currentTab = ref('dashboard');
+            const announcement = ref('');
+            const mobileMenuOpen = ref(false);
+
+            const rid = ref('2250789XXX'); 
+            const nationalFormat = ref(true); 
+            const removePlus = ref(true);     
+            
+            const activeNumber = ref(null);
+            const activeCountry = ref('');
+            const activeOperator = ref('');
+            const otpResult = ref(null);
+            const loadingNumber = ref(false);
+            const liveLogs = ref([]);
+            const successOtps = ref([]);
+            
+            const walletAddressInput = ref('');
+            const walletLoading = ref(false);
+            const apiGenLoading = ref(false);
+
+            const searchQuery = ref('');
+
+            const allocations = ref([]);
+            const currentPage = ref(1);
+            const itemsPerPage = 200;
+
+            const showToast = ref(false);
+            const toastMessage = ref('');
+            let pollingTimer = null;
+
+            // Live Test Lab Variables (Interactive dropdown mapping added for testing all 4 APIs)
+            const selectedTestApi = ref('getnum');
+            const testRange = ref('2250789XXX');
+            const testApiLoading = ref(false);
+            const testApiResponse = ref(null);
+            const apiBaseUrl = ref(window.location.origin);
+
+            // Chart bar indicator configurations matching column indicators in design representation
+            const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
+            const dotColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
+
+            // Leaderboard Reactive Module
+            const leaderboardTab = ref('today');
+            const leaderboardData = ref({ today: [], weekly: [], lifetime: [] });
+
+            // Withdrawal Variables 
+            const withdrawAmount = ref('');
+            const withdrawMethod = ref('TRC20');
+
+            const playBeep = () => {
+              try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = "sine";
+                osc.frequency.setValueAtTime(880, ctx.currentTime); 
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.15); 
+              } catch (e) {
+                console.log("Audio notify failed:", e);
+              }
+            };
+
+            const triggerToast = (msg) => {
+              toastMessage.value = msg;
+              showToast.value = true;
+              setTimeout(() => {
+                showToast.value = false;
+              }, 2000);
+            };
+
+            const copyToClipboard = (text) => {
+              if (!text) return;
+              navigator.clipboard.writeText(text);
+              triggerToast("Copied: " + text);
+            };
+
+            const copyFullSms = (messageText) => {
+              if (!messageText) return;
+              navigator.clipboard.writeText(messageText);
+              triggerToast("Full OTP SMS message copied! ✅");
+            };
+
+            const navigateMobile = (tabName) => {
+              currentTab.value = tabName;
+              mobileMenuOpen.value = false;
+            };
+
+            const filteredAllocations = computed(() => {
+              if (!allocations.value) return [];
+              const q = searchQuery.value.toLowerCase().trim();
+              if (!q) return allocations.value;
+              return allocations.value.filter(alloc => 
+                (alloc.number && alloc.number.includes(q)) || 
+                (alloc.country && alloc.country.toLowerCase().includes(q)) ||
+                (alloc.operator && alloc.operator.toLowerCase().includes(q))
+              );
+            });
+
+            const paginatedAllocations = computed(() => {
+              if (!filteredAllocations.value) return [];
+              const start = (currentPage.value - 1) * itemsPerPage;
+              const end = start + itemsPerPage;
+              return filteredAllocations.value.slice(start, end);
+            });
+
+            const totalPages = computed(() => {
+              return Math.ceil(filteredAllocations.value.length / itemsPerPage) || 1;
+            });
+
+            const prevPage = () => {
+              if (currentPage.value > 1) currentPage.value--;
+            };
+
+            const nextPage = () => {
+              if (currentPage.value < totalPages.value) currentPage.value++;
+            };
+
+            const updateTimers = () => {
+              if (!allocations.value) return;
+              allocations.value.forEach(alloc => {
+                if (alloc.status === 'active') {
+                  const createdAt = new Date(alloc.createdAt);
+                  const elapsedSeconds = Math.floor((new Date() - createdAt) / 1000);
+                  const remaining = Math.max(0, 1080 - elapsedSeconds);
+                  alloc.timeLeft = remaining;
+                  if (remaining === 0) {
+                    alloc.status = 'expired';
+                  }
+                } else {
+                  alloc.timeLeft = 0;
+                }
+              });
+            };
+
+            const startPolling = () => {
+              stopPolling();
+              fetchData();
+              pollingTimer = setInterval(fetchData, 3000); 
+            };
+
+            const stopPolling = () => {
+              if (pollingTimer) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+              }
+            };
+
+            // Merging logic with 150 items maximum upper limit limit
+            const mergeLogs = (newLogs) => {
+              newLogs.forEach(newLog => {
+                const key = `${newLog.range}_${newLog.service}_${newLog.time}`;
+                const exists = liveLogs.value.some(existingLog => 
+                  `${existingLog.range}_${existingLog.service}_${existingLog.time}` === key
+                );
+                if (!exists) {
+                  // New elements unshifted gracefully on top of list
+                  liveLogs.value.unshift(newLog);
+                }
+              });
+
+              // Sorting by time stamp descending so newest logs reside on top
+              liveLogs.value.sort((a, b) => b.time - a.time);
+
+              // Strict truncation of older indices when total elements exceed exactly 150
+              if (liveLogs.value.length > 150) {
+                liveLogs.value = liveLogs.value.slice(0, 150);
+              }
+            };
+
+            // Dynamic aggregation counting and sorting of top tracked services in chart indicators
+            const topApps = computed(() => {
+              const counts = {};
+              let total = 0;
+              liveLogs.value.forEach(log => {
+                const serviceName = log.service || 'Global';
+                counts[serviceName] = (counts[serviceName] || 0) + 1;
+                total++;
+              });
+              
+              const list = Object.keys(counts).map(key => {
+                return {
+                  name: key,
+                  count: counts[key],
+                  percentage: total > 0 ? Math.round((counts[key] / total) * 100) : 0
+                };
+              });
+              
+              list.sort((a, b) => b.count - a.count);
+              return { list: list.slice(0, 4), total };
+            });
+
+            const fetchData = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) {
+                userLoaded.value = true;
+                return;
+              }
+
+              // 1. Fetch User Profile Details
+              try {
+                const profileRes = await fetch('/api/v1/auth/me', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (profileRes.status === 401 || profileRes.status === 402) {
+                  signOut();
+                  userLoaded.value = true;
+                  return;
+                }
+
+                const profileData = await profileRes.json();
+                if (profileData.status === 'success') {
+                  user.value = profileData.user;
+                  profile.value = profileData.user;
+                  announcement.value = profileData.announcement;
+                  if (profileData.user.wallet_address && !walletAddressInput.value) {
+                    walletAddressInput.value = profileData.user.wallet_address;
+                  }
+                }
+              } catch (e) {
+                console.log("Profile Fetch Error:", e);
+              }
+
+              userLoaded.value = true; 
+
+              // 2. Poll active number allocations
+              if (profile.value) {
+                try {
+                  const allocRes = await fetch('/api/v1/user-allocations', {
+                    headers: { 
+                      'Authorization': `Bearer ${token}`,
+                      'X-MINO-API-KEY': profile.value.api_key || ''
+                    }
+                  });
+                  const allocData = await allocRes.json();
+                  if (allocData.status === 'success') {
+                    const prevCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    
+                    allocations.value = allocData.allocations;
+                    updateTimers();
+
+                    const newCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    if (newCompletedCount > prevCompletedCount && prevCompletedCount > 0) {
+                      playBeep();
+                      triggerToast("New OTP message received! 🔔");
+                    }
+                  }
+                } catch (e) {}
+              }
+
+              // 3. Fetch Signal Tracker Logs (Bearer Token Mapped to secure endpoint calls)
+              try {
+                const consoleRes = await fetch('/api/v1/live-console', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const consoleData = await consoleRes.json();
+                if (consoleData.status === 'success') {
+                  mergeLogs(consoleData.data);
+                }
+              } catch (e) {}
+
+              // 4. Fetch Dashboard OTP Report data
+              if (profile.value) {
+                try {
+                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''), {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                  });
+                  const otpData = await otpRes.json();
+                  if (otpData.status === 'success') {
+                    successOtps.value = otpData.data;
+                  }
+                } catch (e) {}
+              }
+
+              // 5. Fetch Leaderboard Ratings (Bearer Token Mapped to secure endpoint calls)
+              try {
+                const boardRes = await fetch('/api/v1/leaderboard', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const boardData = await boardRes.json();
+                if (boardData.status === 'success') {
+                  leaderboardData.value.today = boardData.today;
+                  leaderboardData.value.weekly = boardData.weekly;
+                  leaderboardData.value.lifetime = boardData.lifetime;
+                }
+              } catch (e) {}
+            };
+
+            const handleUpdateWallet = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token || !walletAddressInput.value.trim()) return;
+              
+              walletLoading.value = true;
+              try {
+                const res = await fetch('/api/v1/user/update-wallet', {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({ wallet_address: walletAddressInput.value })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("Wallet address successfully configured! ✅");
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("Failed to update wallet address.");
+              }
+              walletLoading.value = false;
+            };
+
+            const handleGenerateApiKey = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) return;
+              
+              apiGenLoading.value = true;
+              try {
+                const res = await fetch('/api/v1/user/generate-key', {
+                  method: 'POST',
+                  headers: { 
+                    'Authorization': `Bearer ${token}`
+                  }
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("API Access Key generated! ✅");
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("Could not generate API Access Key.");
+              }
+              apiGenLoading.value = false;
+            };
+
+            const submitWithdrawal = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token || withdrawAmount.value <= 0) return;
+              try {
+                const res = await fetch('/api/v1/user/withdraw', {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                    amount: withdrawAmount.value,
+                    method: withdrawMethod.value,
+                    address: profile.value.wallet_address
+                  })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  alert("Your withdrawal request has been submitted.");
+                  withdrawAmount.value = '';
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("An error occurred while submitting withdrawal request.");
+              }
+            };
+
+            // Dynamic test script targeting selected APIs dynamically
+            const runLiveApiTest = async () => {
+              if (!profile.value?.api_key) {
+                alert("Please generate an API Key first.");
+                return;
+              }
+              testApiLoading.value = true;
+              testApiResponse.value = null;
+              try {
+                let url = '';
+                if (selectedTestApi.value === 'getnum') {
+                  // Mapped to secure POST booking endpoint simulation
+                  const postRes = await fetch(`/@public/api/getnum`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      api_key: profile.value.api_key,
+                      rid: testRange.value,
+                      national: 1,
+                      remove_plus: 1
+                    })
+                  });
+                  const postData = await postRes.json();
+                  testApiResponse.value = JSON.stringify(postData, null, 2);
+                  return;
+                } else if (selectedTestApi.value === 'liveaccess') {
+                  url = `/@public/api/liveaccess?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'success-otp') {
+                  url = `/@public/api/success-otp?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'console') {
+                  url = `/@public/api/console?api_key=${profile.value.api_key}`;
+                }
+                const res = await fetch(url);
+                const data = await res.json();
+                testApiResponse.value = JSON.stringify(data, null, 2);
+              } catch (e) {
+                testApiResponse.value = "API Request failed.";
+              }
+              testApiLoading.value = false;
+            };
+
+            onMounted(() => {
+              const token = localStorage.getItem('mino_session_token');
+              if (token) {
+                startPolling();
+              } else {
+                userLoaded.value = true;
+              }
+              setInterval(updateTimers, 1000);
+            });
+
+            const handleAuth = async () => {
+              if (!authEmail.value || !authPassword.value) return;
+              authLoading.value = true;
+              try {
+                const url = isRegistering.value ? '/api/v1/auth/register' : '/api/v1/auth/login';
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                    email: authEmail.value, 
+                    password: authPassword.value,
+                    name: authName.value
+                  })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                  if (isRegistering.value) {
+                     alert("Your account has been registered successfully. Please wait for admin approval.");
+                     isRegistering.value = false;
+                     authLoading.value = false;
+                     return;
+                  }
+                  localStorage.setItem('mino_session_token', data.token);
+                  user.value = data.user;
+                  profile.value = data.user;
+                  startPolling();
+                } else {
+                  alert(data.message);
+                }
+              } catch (err) {
+                alert(err.message || 'Authentication process failed.');
+              }
+              authLoading.value = false;
+            };
+
+            const signOut = () => {
+              localStorage.removeItem('mino_session_token');
+              user.value = null;
+              profile.value = null;
+              activeNumber.value = null;
+              otpResult.value = null;
+              allocations.value = [];
+              stopPolling();
+            };
+
+            const handleGetNumber = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!profile.value || !token) return;
+              loadingNumber.value = true;
+              otpResult.value = null;
+              activeNumber.value = null;
+              activeCountry.value = '';
+              activeOperator.value = '';
+              try {
+                const natVal = nationalFormat.value ? 1 : 0;
+                const remVal = removePlus.value ? 1 : 0;
+                const res = await fetch(`/api/v1/getnum?rid=${rid.value}&national=${natVal}&remove_plus=${remVal}`, {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("Number successfully allocated!");
+                  fetchData(); 
+                } else {
+                  alert(data.message);
+                }
+              } catch (err) {
+                alert('Failed to allocate number');
+              }
+              loadingNumber.value = false;
+            };
+
+            const formatTime = (seconds) => {
+              const mins = Math.floor(seconds / 60);
+              const secs = seconds % 60;
+              return mins + ':' + (secs < 10 ? '0' : '') + secs;
+            };
+
+            const formatTimestamp = (isoString) => {
+              if (!isoString) return '';
+              try {
+                const d = new Date(isoString);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              } catch (e) {
+                return '';
+              }
+            };
+
+            return {
+              userLoaded, user, profile, authName, authEmail, authPassword, isRegistering, authLoading,
+              currentTab, announcement, mobileMenuOpen, navigateMobile, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
+              allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
+              showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
+              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
+              apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
+              barColors, dotColors, topApps, leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal
+            };
+          }
+        }).mount('#app');
+      </script>
+    </body>
+    </html>
+    """
+    return Response(html_content, mimetype='text/html')
+
+# =========================================================================
+# Master Admin Panel UI (Fixed Loading early return spinner bug)
+# =========================================================================
+@app.route('/admin', methods=['GET'])
+def admin_portal():
+    admin_html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>MINO SMS - MASTER ADMIN PANEL</title>
+      <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+      <script src="https://cdn.tailwindcss.com"></script>
+      <style>
+        [v-cloak] { display: none; }
+      </style>
+    </head>
+    <body class="bg-slate-100 text-slate-700 font-sans select-none pb-12">
+      
+      <div id="admin-app">
+
+        <!-- Loading Screen Overlay -->
+        <div v-if="loading" class="fixed inset-0 bg-slate-50 flex flex-col items-center justify-center space-y-4 z-50">
+          <div class="h-12 w-12 border-4 border-rose-600 border-t-transparent rounded-full animate-spin"></div>
+          <p class="text-xs font-black text-rose-600 uppercase tracking-widest animate-pulse">MINO MASTER ADMIN LOADING...</p>
+        </div>
+
+        <div v-cloak v-else>
+
+          <!-- Toast Notifications -->
+          <div v-if="toast" class="fixed top-5 left-1/2 -translate-x-1/2 bg-[#0088CC] text-white font-black text-xs px-5 py-3 rounded-2xl shadow-xl z-[9999] transition animate-bounce">
+            {{ toastMessage }}
+          </div>
+
+          <!-- Admin Login Form -->
+          <div v-if="!adminToken" class="min-h-screen flex items-center justify-center p-4">
+            <div class="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-sm w-full space-y-6">
+              <div class="text-center space-y-1">
+                <span class="px-3 py-1 bg-rose-600 rounded-xl text-white font-black text-sm mx-auto shadow-sm w-max inline-block">MASTER ADMIN</span>
+                <h1 class="text-xl font-black text-slate-900">MINO SMS PANEL</h1>
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Authorized Access Only</p>
+              </div>
+
+              <form @submit.prevent="handleLogin" class="space-y-4">
+                <div>
+                  <label class="text-xs font-bold text-slate-500">Admin Username</label>
+                  <input type="text" required v-model="username" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold outline-none focus:border-rose-600 transition" />
+                </div>
+                <div>
+                  <label class="text-xs font-bold text-slate-500">Admin Password</label>
+                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-rose-600 transition outline-none" />
+                </div>
+
+                <button type="submit" :disabled="authLoading" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
+                  {{ authLoading ? 'LOGGING IN...' : 'ACCESS PORTAL' }}
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Master Admin Dashboard Area -->
+          <div v-else class="min-h-screen flex flex-col md:flex-row">
+            
+            <!-- Sidebar -->
+            <aside class="w-full md:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0">
+              <div class="p-6 border-b border-slate-800 flex items-center gap-3 bg-slate-950">
+                <span class="px-2 py-0.5 bg-rose-600 rounded text-white font-black text-xs">ADMIN</span>
+                <span class="text-md font-black text-white">MINO SMS</span>
+              </div>
+
+              <nav class="flex-1 p-4 space-y-1">
+                <button @click="currentTab = 'dashboard'" :class="currentTab === 'dashboard' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-chart-line"></i> Dashboard Overview
+                </button>
+                <button @click="currentTab = 'users'" :class="currentTab === 'users' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-users"></i> User Administration
+                </button>
+                <button @click="currentTab = 'withdrawals'" :class="currentTab === 'withdrawals' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-money-bill-transfer"></i> Withdrawal Requests
+                </button>
+                <button @click="currentTab = 'allocations'" :class="currentTab === 'allocations' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-mobile-screen"></i> Number Tracking Logs
+                </button>
+                <button @click="currentTab = 'otp-logs'" :class="currentTab === 'otp-logs' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-envelope-open-text"></i> Global OTP logs
+                </button>
+                <button @click="currentTab = 'settings'" :class="currentTab === 'settings' ? 'bg-rose-600 text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-bold transition text-left">
+                  <i class="fa-solid fa-gears"></i> System Settings & Controls
+                </button>
+              </nav>
+
+              <div class="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-950 text-xs font-bold">
+                <span>ADMIN PORTAL</span>
+                <button @click="logOut" class="text-rose-400 hover:text-rose-600 font-black"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
+              </div>
+            </aside>
+
+            <!-- Main Content Area -->
+            <main class="flex-1 p-4 md:p-8 space-y-6 overflow-y-auto">
+              
+              <header class="flex justify-between items-center border-b border-slate-200 pb-4">
+                <h2 class="text-md md:text-lg font-black text-slate-900 capitalize">{{ currentTab }} Management</h2>
+                <div class="text-xs font-black bg-rose-100 text-rose-600 px-3 py-1.5 rounded-full shadow-sm uppercase tracking-wider">
+                  Live Master Admin
+                </div>
+              </header>
+
+              <!-- ==================== Tab 1: Dashboard Overview ==================== -->
+              <div v-if="currentTab === 'dashboard'" class="space-y-6">
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Total Users</p>
+                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_users }}</h3>
+                  </div>
+                  <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between border-amber-200 bg-amber-50/20 animate-pulse">
+                    <p class="text-[10px] text-amber-600 font-bold uppercase tracking-wide">Pending Registrations</p>
+                    <h3 class="text-2xl font-black text-amber-600 mt-2">{{ stats.pending_users }}</h3>
+                  </div>
+                  <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Total Allocations</p>
+                    <h3 class="text-2xl font-black text-slate-900 mt-2">{{ stats.total_allocations }}</h3>
+                  </div>
+                  <div class="bg-white p-5 rounded-2xl border shadow-xs flex flex-col justify-between">
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Successful OTPs</p>
+                    <h3 class="text-2xl font-black text-emerald-600 mt-2">{{ stats.total_otps }}</h3>
+                  </div>
+                  <div class="bg-white p-5 rounded-2xl border border-indigo-200 bg-indigo-50/10 shadow-xs flex flex-col justify-between">
+                    <p class="text-[10px] text-indigo-600 font-bold uppercase tracking-wide">Withdrawal Requests</p>
+                    <h3 class="text-2xl font-black text-indigo-600 mt-2">{{ stats.total_withdrawals }}</h3>
+                  </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-3">
+                  <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">System Quick Controls</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div class="bg-slate-50 p-4 rounded-2xl border flex items-center justify-between">
+                      <div>
+                        <p class="text-xs font-black text-slate-700">Maintenance Mode</p>
+                        <p class="text-[10px] text-slate-400 mt-0.5">Enabling this option suspends access to the general user panel.</p>
+                      </div>
+                      <button @click="toggleMaintenanceMode" :class="stats.maintenance_mode ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'" class="px-4 py-2 rounded-xl text-xs font-black transition">
+                        {{ stats.maintenance_mode ? 'ACTIVE' : 'INACTIVE' }}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==================== Tab 2: User Administration ==================== -->
+              <div v-if="currentTab === 'users'" class="space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <input type="text" v-model="searchQuery" placeholder="Search users by name, email..." class="w-full sm:w-80 p-3 bg-white border rounded-2xl text-xs font-semibold outline-none focus:border-rose-600" />
+                  
+                  <button @click="exportUsersToCSV" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition flex items-center gap-1">
+                    <i class="fa-solid fa-file-csv"></i> Export Users CSV
+                  </button>
+                </div>
+
+                <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
+                          <th class="p-4">User & ID Code</th>
+                          <th class="p-4">Email & Credentials</th>
+                          <th class="p-4">Balance</th>
+                          <th class="p-4">OTP Rate (৳)</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
+                        <tr v-if="filteredUsers.length === 0">
+                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">No users match your criteria.</td>
+                        </tr>
+                        <tr v-else v-for="u in filteredUsers" :key="u.uid" class="hover:bg-slate-50/50 transition">
+                          <td class="p-4">
+                            <p class="font-black text-slate-900 text-sm">{{ u.name }}</p>
+                            <p class="text-[10px] text-[#0088CC] tracking-wider mt-0.5">ID: {{ u.id_code || 'MINO-N/A' }}</p>
+                            <p class="text-[9px] text-slate-400 font-medium">UID: {{ u.uid }}</p>
+                          </td>
+                          <td class="p-4">
+                            <p class="font-mono text-slate-800">{{ u.email }}</p>
+                            <p class="text-[10px] text-slate-400 mt-1 font-mono">Password: {{ u.password }}</p>
+                          </td>
+                          <td class="p-4 font-black text-slate-900 text-sm">৳ {{ parseFloat(u.balance || 0).toFixed(2) }}</td>
+                          <td class="p-4 font-black text-slate-700 text-xs">৳ {{ parseFloat(u.otp_rate || 0.40).toFixed(2) }}</td>
+                          <td class="p-4">
+                            <span v-if="u.status === 'approved'" class="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Approved</span>
+                            <span v-else-if="u.status === 'pending'" class="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Pending</span>
+                            <span v-else class="bg-rose-100 text-rose-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Banned</span>
+                          </td>
+                          <td class="p-4 text-right space-x-1 whitespace-nowrap">
+                            <button @click="openEditModal(u)" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">Edit</button>
+                            <button @click="deleteUser(u.uid)" class="bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-bold px-3 py-1.5 rounded-xl transition">Delete</button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- User Modal Edit Details -->
+                <div v-if="editUser" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                  <div class="bg-white p-6 rounded-3xl border shadow-xl max-w-md w-full space-y-4">
+                    <div class="flex justify-between items-center border-b pb-2">
+                      <h3 class="font-black text-slate-900 text-sm">Edit Account: {{ editUser.name }}</h3>
+                      <button @click="editUser = null" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+                    </div>
+
+                    <div class="space-y-3 text-xs font-bold">
+                      <div>
+                        <label class="text-slate-400">Manual Balance Edit (৳)</label>
+                        <input type="number" step="0.01" v-model="editUser.balance" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm font-black outline-none focus:border-rose-600" />
+                      </div>
+                      <div>
+                        <label class="text-slate-400">Custom OTP Rate (৳)</label>
+                        <input type="number" step="0.01" v-model="editUser.otp_rate" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm font-black outline-none focus:border-rose-600" />
+                      </div>
+                      <div>
+                        <label class="text-slate-400">Reset User Password</label>
+                        <input type="text" v-model="editUser.password" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600" />
+                      </div>
+                      <div>
+                        <label class="text-slate-400">Saved Wallet Address</label>
+                        <input type="text" v-model="editUser.wallet_address" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600" />
+                      </div>
+                      <div>
+                        <label class="text-slate-400">API Key Override</label>
+                        <input type="text" v-model="editUser.api_key" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none font-mono focus:border-rose-600" />
+                      </div>
+                      <div>
+                        <label class="text-slate-400">Account Authorization Status</label>
+                        <select v-model="editUser.status" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl text-sm outline-none focus:border-rose-600">
+                          <option value="approved">Approved (Active)</option>
+                          <option value="pending">Pending (Awaiting Approval)</option>
+                          <option value="banned">Banned (Disabled)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="flex gap-2 pt-2">
+                      <button @click="editUser = null" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-xl text-xs transition">Cancel</button>
+                      <button @click="saveUserChanges" class="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 rounded-xl text-xs transition">Save Changes</button>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- ==================== Tab 3: Withdrawal Requests ==================== -->
+              <div v-if="currentTab === 'withdrawals'" class="space-y-4">
+                <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
+                          <th class="p-4">User & Account Details</th>
+                          <th class="p-4">Amount Requested</th>
+                          <th class="p-4">Method</th>
+                          <th class="p-4">Destination Wallet Address</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4">Requested At</th>
+                          <th class="p-4 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
+                        <tr v-if="withdrawals.length === 0">
+                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No withdrawal requests found.</td>
+                        </tr>
+                        <tr v-else v-for="wd in withdrawals" :key="wd.id" class="hover:bg-slate-50/50 transition">
+                          <td class="p-4">
+                            <p class="font-black text-slate-900 text-sm">{{ wd.userName }}</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">{{ wd.userEmail }}</p>
+                          </td>
+                          <td class="p-4 font-black text-rose-600 text-sm">৳ {{ parseFloat(wd.amount || 0).toFixed(2) }}</td>
+                          <td class="p-4 font-black text-indigo-600 uppercase">{{ wd.method }}</td>
+                          <td class="p-4 font-mono select-all text-slate-800 break-all max-w-xs">{{ wd.address }}</td>
+                          <td class="p-4">
+                            <span v-if="wd.status === 'approved'" class="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Approved</span>
+                            <span v-else-if="wd.status === 'pending'" class="bg-amber-100 text-amber-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase animate-pulse">Pending</span>
+                            <span v-else class="bg-rose-100 text-rose-800 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">Rejected</span>
+                          </td>
+                          <td class="p-4 font-mono text-slate-400 text-[10px]">{{ formatTimestamp(wd.createdAt) }}</td>
+                          <td class="p-4 text-right space-x-1 whitespace-nowrap">
+                            <button v-if="wd.status === 'pending'" @click="processWithdrawal(wd.id, 'approved')" class="bg-[#0088CC] text-white text-[10px] font-black px-3 py-1.5 rounded-xl transition">Approve</button>
+                            <button v-if="wd.status === 'pending'" @click="processWithdrawal(wd.id, 'rejected')" class="bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black px-3 py-1.5 rounded-xl transition">Reject</button>
+                            <span v-else class="text-slate-400 italic">Completed</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==================== Tab 4: Number Tracking Logs ==================== -->
+              <div v-if="currentTab === 'allocations'" class="space-y-4">
+                <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
+                          <th class="p-4">User Key</th>
+                          <th class="p-4">Allocated Number</th>
+                          <th class="p-4">Range ID</th>
+                          <th class="p-4">Country & Provider</th>
+                          <th class="p-4">Status</th>
+                          <th class="p-4">Created At</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
+                        <tr v-if="allocations.length === 0">
+                          <td colspan="6" class="p-8 text-center text-slate-400 font-bold">No active or historic allocations found.</td>
+                        </tr>
+                        <tr v-else v-for="a in allocations" :key="a.id">
+                          <td class="p-4">
+                            <span class="font-mono bg-slate-100 px-2 py-0.5 rounded">{{ a.userId }}</span>
+                          </td>
+                          <td class="p-4 font-black text-slate-900 text-sm">{{ a.number }}</td>
+                          <td class="p-4 font-mono font-bold text-[#0088CC]">{{ a.rid }}</td>
+                          <td class="p-4">
+                            <p class="font-bold text-slate-800">{{ a.country }}</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5 uppercase">{{ a.operator }}</p>
+                          </td>
+                          <td class="p-4">
+                            <span v-if="a.status === 'active'" class="bg-amber-100 text-amber-800 text-[9px] font-black px-2 py-0.5 rounded uppercase">ACTIVE</span>
+                            <span v-else-if="a.status === 'completed'" class="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded uppercase">SUCCESS</span>
+                            <span v-else class="bg-slate-100 text-slate-500 text-[9px] font-black px-2 py-0.5 rounded uppercase">EXPIRED</span>
+                          </td>
+                          <td class="p-4 font-mono text-slate-400 text-[10px]">{{ formatTimestamp(a.createdAt) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==================== Tab 5: Global OTP logs ==================== -->
+              <div v-if="currentTab === 'otp-logs'" class="space-y-4">
+                <div class="bg-white rounded-3xl border shadow-xs overflow-hidden">
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr class="bg-slate-50 border-b border-slate-100 text-slate-400 uppercase tracking-wider font-bold">
+                          <th class="p-4">User Key</th>
+                          <th class="p-4">Number</th>
+                          <th class="p-4">Service</th>
+                          <th class="p-4">OTP Code</th>
+                          <th class="p-4">SMS Content</th>
+                          <th class="p-4">Revenue</th>
+                          <th class="p-4">Logged At</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-100 font-semibold text-slate-700">
+                        <tr v-if="otpLogs.length === 0">
+                          <td colspan="7" class="p-8 text-center text-slate-400 font-bold">No global OTP logs recorded.</td>
+                        </tr>
+                        <tr v-else v-for="log in otpLogs" :key="log.createdAt">
+                          <td class="p-4">
+                            <span class="font-mono bg-slate-100 px-2 py-0.5 rounded">{{ log.userId }}</span>
+                          </td>
+                          <td class="p-4 font-black text-slate-900">{{ log.number }}</td>
+                          <td class="p-4 uppercase text-[#0088CC] font-black text-[10px]">{{ log.service }}</td>
+                          <td class="p-4 font-black text-emerald-600 text-sm">{{ log.otpCode }}</td>
+                          <td class="p-4 text-slate-500 leading-relaxed max-w-xs truncate" :title="log.message">{{ log.message }}</td>
+                          <td class="p-4 font-black text-slate-900">৳ {{ parseFloat(log.revenue || 0).toFixed(2) }}</td>
+                          <td class="p-4 font-mono text-slate-400 text-[10px]">{{ formatTimestamp(log.createdAt) }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ==================== Tab 6: System Settings & Controls ==================== -->
+              <div v-if="currentTab === 'settings'" class="space-y-6">
+                
+                <!-- Announcement Banner Controls -->
+                <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
+                  <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <i class="fa-solid fa-bullhorn text-rose-600"></i> Global Announcement Control Banner
+                  </h3>
+                  <textarea v-model="announcementInput" rows="2" placeholder="Enter notice updates..." class="w-full p-3 bg-slate-50 border rounded-xl text-xs outline-none focus:border-rose-600 font-semibold"></textarea>
+                  <button @click="updateAnnouncement" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition">
+                    Publish Banner Update
+                  </button>
+                </div>
+
+                <!-- Database Backup and Monitoring Configurations -->
+                <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
+                  <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <i class="fa-solid fa-database text-rose-600"></i> Database Backup & Security Monitoring
+                  </h3>
+                  
+                  <div class="grid md:grid-cols-2 gap-4 text-xs font-semibold">
+                    <div class="bg-slate-50 p-4 rounded-xl border flex flex-col justify-between">
+                      <div>
+                        <p class="font-black text-slate-800">One-Click Database Export (JSON)</p>
+                        <p class="text-[10px] text-slate-400 mt-1">Safely back up the entire Firebase DB structural tree instantly.</p>
+                      </div>
+                      <button @click="downloadBackup" class="w-max mt-3 bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-xl transition">
+                        Download JSON Backup
+                      </button>
+                    </div>
+
+                    <div class="bg-slate-50 p-4 rounded-xl border">
+                      <p class="font-black text-slate-800">Operational Configurations Active</p>
+                      <ul class="text-[10px] text-slate-500 mt-2 list-disc list-inside space-y-1">
+                        <li><strong>Rule 11:</strong> Verification check active on Firebase database operations.</li>
+                        <li><strong>Rule 12:</strong> Default signup state holds as Pending for admin validation.</li>
+                        <li><strong>Rule 13:</strong> Realtime fallback routing config dynamically mapped to secondary gateways.</li>
+                        <li><strong>Rule 14:</strong> Custom OTP custom rates configurable per unique User ID.</li>
+                        <li><strong>Rule 15:</strong> Password override structures active on backend user structures.</li>
+                        <li><strong>Rule 16:</strong> Automatic database backup generators and sync loops.</li>
+                        <li><strong>Rule 17:</strong> Global maintenance status checks enabled on before_request scopes.</li>
+                        <li><strong>Rule 18:</strong> Signal Intercept radars mapped to STEX streams.</li>
+                        <li><strong>Rule 19:</strong> Safe environment private credentials decoded during start cycles.</li>
+                        <li><strong>Rule 20:</strong> Dynamic 18-minute allocation countdown timer actively enforced.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+            </main>
+          </div>
+        </div>
+
+      </div>
+
+      <script>
+        const { createApp, ref, onMounted, watch, computed } = Vue;
 
         createApp({
           setup() {
