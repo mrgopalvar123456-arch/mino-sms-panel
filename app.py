@@ -151,7 +151,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# Highly Optimized Authentication Middleware with Silent JSON Checks to Prevent 415 Errors
+# Highly Robust Authentication Middleware supporting multiple header formats, JSON parameter inputs and forms
 def get_current_user_optimized():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
@@ -161,15 +161,18 @@ def get_current_user_optimized():
         if user and user.get('status', 'pending') == 'approved':
             return user
 
-    api_key = request.headers.get('X-MINO-API-KEY') or request.args.get('api_key')
-    if not api_key:
-        if request.is_json:
-            try:
-                # Using silent parameter extraction to safely handle missing Content-Type headers
-                data = request.get_json(silent=True) or {}
-                api_key = data.get('api_key')
-            except Exception:
-                pass
+    api_key = (
+        request.headers.get('X-MINO-API-KEY') or 
+        request.args.get('api_key') or 
+        request.form.get('api_key')
+    )
+    
+    if not api_key and request.is_json:
+        try:
+            data = request.get_json(silent=True) or {}
+            api_key = data.get('api_key')
+        except Exception:
+            pass
             
     if api_key:
         users_ref = fb_db.reference('/users')
@@ -441,12 +444,11 @@ def get_leaderboard():
 # Public API Endpoints (GET & POST - Secured with 402 Error Code blocks)
 # =========================================================================
 
-# 1. Booking API (POST requested, optimized to completely bypass 415 header issues)
-@app.route('/@public/api/getnum', methods=['POST'])
+# 1. Booking API (Supports GET and POST, robust parameter parser)
+@app.route('/@public/api/getnum', methods=['POST', 'GET'])
 @app.route('/api/v1/getnum', methods=['POST', 'GET'])
 def getnum():
     try:
-        # Checking JSON securely with fallback parameters representation to avoid 415 aborts
         data = {}
         if request.is_json:
             try:
@@ -540,43 +542,24 @@ def getnum():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 2. Live Access Status API (GET only as requested - Proxied/Forwarded to STEX LiveAccess API)
+# 2. Live Access Status API (GET only - Returns EXACTLY and ONLY the real-time STEX raw JSON format)
 @app.route('/@public/api/liveaccess', methods=['GET'])
 def liveaccess():
     user = get_current_user_optimized()
     if not user:
         return jsonify({'status': 'error', 'message': 'Access Denied. Invalid or Missing API credentials.'}), 402
     
-    stex_data = {}
     try:
-        # Calling STEX liveaccess endpoint dynamically as requested
+        # Dynamic proxy to return the exact raw response format of the STEX backend
         res = requests.get(f"{STEX_BASE_URL}/liveaccess", headers={'mauthapi': STEX_API_KEY}, timeout=4)
         if res.status_code == 200:
-            stex_data = res.json()
+            return Response(res.text, mimetype='application/json')
+        else:
+            return Response(res.text, status=res.status_code, mimetype='application/json')
     except Exception as e:
-        print("STEX Live Access API Call Error:", e)
+        return jsonify({'status': 'error', 'message': f'STEX Live Access fetch failed: {str(e)}'}), 500
 
-    response_payload = {
-        'status': 'success',
-        'message': 'API credentials validated successfully',
-        'client': {
-            'uid': user.get('uid'),
-            'name': user.get('name'),
-            'id_code': user.get('id_code'),
-            'balance': user.get('balance', 0.0),
-            'otp_rate': user.get('otp_rate', 0.40)
-        }
-    }
-
-    # Merging the STEX raw liveaccess API response into our response payload securely
-    if isinstance(stex_data, dict):
-        for k, v in stex_data.items():
-            if k not in response_payload:
-                response_payload[k] = v
-
-    return jsonify(response_payload)
-
-# 3. Successful OTP Reports API (GET only as requested)
+# 3. Successful OTP Reports API (GET only)
 @app.route('/@public/api/success-otp', methods=['GET'])
 @app.route('/api/v1/success-otp', methods=['GET', 'POST'])
 def success_otp():
@@ -605,7 +588,7 @@ def success_otp():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 4. Live Console API (GET only as requested, Array list mapping optimized)
+# 4. Live Console API (GET only, Array list mapping optimized)
 @app.route('/@public/api/console', methods=['GET'])
 @app.route('/api/v1/live-console', methods=['GET', 'POST'])
 def get_live_console():
@@ -619,7 +602,6 @@ def get_live_console():
             stex_data = res.json()
             hits = []
             
-            # Handling both array list formatting and nested json formats securely
             if isinstance(stex_data, list):
                 hits = stex_data
             elif isinstance(stex_data, dict):
@@ -642,7 +624,6 @@ def get_live_console():
                 time_val = hit.get('time') or hit.get('last_at') or 0
                 
                 if single_range and msg:
-                    # Single Range Format (as shown in STEX SMS API response screenshot)
                     c_name = get_country_from_range(single_range)
                     data.append({
                         'range': single_range,
@@ -652,7 +633,6 @@ def get_live_console():
                         'country': c_name
                     })
                 else:
-                    # Fallback for alternative array-based ranges format
                     ranges = hit.get('ranges', [])
                     if isinstance(ranges, list):
                         for r in ranges:
@@ -678,6 +658,143 @@ def get_live_console():
         print("STEX Console API Error:", e)
     return jsonify({'status': 'success', 'data': []})
 
+# 5. Check Single Number Status (Extremely Useful for Telegram Bots and Integrations)
+@app.route('/@public/api/check', methods=['GET', 'POST'])
+def check_number_status():
+    try:
+        user = get_current_user_optimized()
+        if not user:
+            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 402
+
+        data = {}
+        if request.is_json:
+            try:
+                data = request.get_json(silent=True) or {}
+            except Exception:
+                pass
+        form_data = request.form or {}
+        args_data = request.args or {}
+        
+        target_number = data.get('number') or form_data.get('number') or args_data.get('number')
+        if not target_number:
+            return jsonify({'status': 'error', 'message': 'Missing number parameter'}), 400
+        
+        clean_target = str(target_number).replace('+', '').strip()
+        
+        # Search DB allocated lists
+        all_allocs_dict = fb_db.reference('/allocated_numbers').get() or {}
+        all_allocs_list = firebase_to_list(all_allocs_dict)
+        user_id = user['uid']
+        
+        matched_alloc = None
+        for alloc in all_allocs_list:
+            if alloc.get('userId') == user_id:
+                alloc_num = str(alloc.get('number', '')).replace('+', '').strip()
+                if clean_target in alloc_num or alloc_num in clean_target:
+                    matched_alloc = alloc
+                    break
+        
+        if not matched_alloc:
+            return jsonify({'status': 'error', 'message': 'Number allocation not found for this user'}), 404
+        
+        # Real-time Background sync update fallback during query
+        if matched_alloc.get('status') == 'active':
+            try:
+                res = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=3)
+                if res.status_code == 200:
+                    json_data = res.json()
+                    otps = json_data.get('data', {}).get('otps', [])
+                    for otp_item in otps:
+                        otp_num = str(otp_item.get('number', '')).replace('+', '').strip()
+                        alloc_num = str(matched_alloc.get('number', '')).replace('+', '').strip()
+                        if clean_target in otp_num or otp_num in clean_target:
+                            message = otp_item.get('message', '')
+                            
+                            # Clean numeric extraction (4 to 9 digit code)
+                            otp_code = ""
+                            match = re.search(r'\b\d{4,9}\b', message)
+                            if match:
+                                otp_code = match.group(0)
+                            else:
+                                any_digits = re.findall(r'\d+', message)
+                                otp_code = max(any_digits, key=len) if any_digits else "N/A"
+                                if len(otp_code) > 9:
+                                    otp_code = otp_code[:9]
+                                    
+                            matched_alloc['status'] = 'completed'
+                            matched_alloc['otp'] = otp_code
+                            matched_alloc['message'] = message
+                            
+                            alloc_id = matched_alloc.get('id')
+                            if alloc_id:
+                                fb_db.reference(f'/allocated_numbers/{alloc_id}').update({
+                                    'status': 'completed',
+                                    'otp': otp_code,
+                                    'message': message
+                                })
+                                
+                            service_rates = fb_db.reference('/settings/service_rates').get() or {}
+                            service_rates = {k.lower(): v for k, v in service_rates.items()}
+                            
+                            service = 'generic'
+                            msg_lower = message.lower()
+                            if 'facebook' in msg_lower or 'fb' in msg_lower: service = 'facebook'
+                            elif 'instagram' in msg_lower or 'ig' in msg_lower: service = 'instagram'
+                            elif 'whatsapp' in msg_lower or 'wa' in msg_lower: service = 'whatsapp'
+                            elif 'telegram' in msg_lower or 'tg' in msg_lower: service = 'telegram'
+                            elif 'google' in msg_lower or 'g-' in msg_lower: service = 'google'
+                            
+                            exist_log = False
+                            all_logs = fb_db.reference('/otp_logs').get() or {}
+                            for item in firebase_to_list(all_logs):
+                                if item.get('number') == matched_alloc['number']:
+                                    exist_log = True
+                                    break
+                            
+                            if not exist_log:
+                                otp_rate = float(user.get('otp_rate', 0.40))
+                                svc_config = service_rates.get(service)
+                                svc_status = 'ON'
+                                svc_payout_rate = otp_rate
+
+                                if isinstance(svc_config, dict):
+                                    svc_status = str(svc_config.get('status', 'ON')).upper()
+                                    svc_payout_rate = float(svc_config.get('rate', otp_rate))
+                                elif svc_config is not None:
+                                    try:
+                                        svc_payout_rate = float(svc_config)
+                                    except ValueError:
+                                        pass
+
+                                earned_revenue = 0.00 if svc_status == 'OFF' else svc_payout_rate
+                                new_balance = float(user.get('balance', 0.0)) + earned_revenue
+                                fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
+                                
+                                otp_id = "otp_" + secrets.token_hex(8)
+                                fb_db.reference(f'/otp_logs/{otp_id}').set({
+                                    'userId': user_id,
+                                    'number': matched_alloc['number'],
+                                    'service': service,
+                                    'otpCode': otp_code,
+                                    'message': message,
+                                    'revenue': earned_revenue,
+                                    'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                })
+                            break
+            except Exception as sync_err:
+                print("Sync error during direct status check:", sync_err)
+                
+        return jsonify({
+            'status': 'success',
+            'number': matched_alloc.get('number'),
+            'allocation_status': matched_alloc.get('status'),
+            'otp_code': matched_alloc.get('otp', ''),
+            'full_sms': matched_alloc.get('message', ''),
+            'created_at': matched_alloc.get('createdAt')
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 # User allocations sync router
 @app.route('/api/v1/user-allocations', methods=['GET'])
 def get_user_allocations():
@@ -693,7 +810,6 @@ def get_user_allocations():
         all_allocs_list = firebase_to_list(all_allocs_dict)
         active_allocs_list = [alloc for alloc in all_allocs_list if alloc.get('userId') == user_id]
 
-        # Fetch Active Service Rates from Settings to use for dynamic rewards calculation
         service_rates = fb_db.reference('/settings/service_rates').get() or {}
         service_rates = {k.lower(): v for k, v in service_rates.items()}
 
@@ -712,12 +828,19 @@ def get_user_allocations():
                             if alloc['status'] == 'active' and (alloc_num in otp_num or otp_num in alloc_num):
                                 message = otp_item.get('message', '')
                                 
+                                # Exact 4 to 9 digits clean matching system
                                 otp_code = ""
-                                match = re.search(r'\b\d{4,8}\b', message)
+                                match = re.search(r'\b\d{4,9}\b', message)
                                 if match:
                                     otp_code = match.group(0)
                                 else:
-                                    otp_code = "SUCCESS"
+                                    any_digits = re.findall(r'\d+', message)
+                                    if any_digits:
+                                        otp_code = max(any_digits, key=len)
+                                        if len(otp_code) > 9:
+                                            otp_code = otp_code[:9]
+                                    else:
+                                        otp_code = "N/A"
 
                                 service = 'generic'
                                 msg_lower = message.lower()
@@ -741,7 +864,6 @@ def get_user_allocations():
                                         break
                                 
                                 if not exist_log:
-                                    # Use specific service rate if configured, fallback to user-level flat otp_rate
                                     svc_config = service_rates.get(service)
                                     svc_status = 'ON'
                                     svc_payout_rate = otp_rate
@@ -755,11 +877,7 @@ def get_user_allocations():
                                         except ValueError:
                                             pass
 
-                                    # If status is OFF, user receives exactly 0.00 balance earnings
-                                    if svc_status == 'OFF':
-                                        earned_revenue = 0.00
-                                    else:
-                                        earned_revenue = svc_payout_rate
+                                    earned_revenue = 0.00 if svc_status == 'OFF' else svc_payout_rate
 
                                     new_balance = float(user.get('balance', 0.0)) + earned_revenue
                                     fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
@@ -851,7 +969,7 @@ def resource_not_found(e):
     return "Page Not Found", 404
 
 # =========================================================================
-# API Routes for Admin
+# API Routes for Admin Panel
 # =========================================================================
 @app.route('/api/v1/admin/login', methods=['POST'])
 def admin_api_login():
@@ -1113,7 +1231,7 @@ def admin_api_otp_logs():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# Client-side UI Rendering (Light Menu theme, Console, Summary, Leaderboard & Help desk support)
+# Client-side UI Rendering (Dynamic digit boxes, and copy capabilities)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -1188,7 +1306,7 @@ def index():
           <!-- Main Panel Dashboard Interface -->
           <div v-else class="min-h-screen flex flex-col md:flex-row">
             
-            <!-- Desktop Sidebar Navigation (Light theme styled buttons) -->
+            <!-- Desktop Sidebar Navigation -->
             <aside class="hidden md:flex w-64 bg-white border-r border-slate-200 flex-col shrink-0">
               <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <span class="px-2 py-1 bg-[#0088CC] rounded-lg flex items-center justify-center text-white font-black text-sm">MINO</span>
@@ -1216,7 +1334,7 @@ def index():
                 </button>
               </nav>
 
-              <!-- Telegram support helpdesk channel button -->
+              <!-- Support Telegram Help Desk button -->
               <div class="p-4 border-t border-slate-100 bg-slate-50/50 space-y-3">
                 <a href="https://t.me/MinoXSupport0" target="_blank" class="flex items-center gap-2 text-xs font-bold text-[#0088CC] hover:underline">
                   <i class="fa-brands fa-telegram text-base"></i> Telegram Support
@@ -1235,7 +1353,7 @@ def index():
               </div>
             </aside>
 
-            <!-- Light Theme Slide-out Mobile Menu Drawer (Light mode UI button channels) -->
+            <!-- Slide-out Mobile Menu Drawer -->
             <transition enter-active-class="transition ease-out duration-300" enter-from-class="-translate-x-full" enter-to-class="translate-x-0" leave-active-class="transition ease-in duration-200" leave-from-class="translate-x-0" leave-to-class="-translate-x-full">
               <aside v-if="mobileMenuOpen" class="fixed inset-y-0 left-0 w-64 bg-white text-slate-700 flex flex-col z-50 md:hidden shadow-2xl border-r border-slate-100">
                 <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
@@ -1338,7 +1456,7 @@ def index():
                   </div>
                 </div>
 
-                <!-- SUMMARY CARD: Realtime dynamic aggregation of user activity numbers -->
+                <!-- SUMMARY CARD -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                     <i class="fa-solid fa-square-poll-vertical text-[#0088CC]"></i> WORK SUMMARY
@@ -1374,6 +1492,7 @@ def index():
                   </a>
                 </div>
 
+                <!-- Latest OTP Reports -->
                 <div class="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-hidden">
                   <div class="p-4 border-b border-slate-100 bg-slate-50/50">
                     <h4 class="font-bold text-xs text-slate-400 uppercase tracking-widest">Latest OTP Reports</h4>
@@ -1390,7 +1509,7 @@ def index():
                       </div>
                       <div class="flex justify-between items-center bg-slate-50 p-2 rounded-xl">
                         <span class="text-slate-400 font-bold">OTP Code:</span>
-                        <span class="font-bold text-emerald-600 text-sm">{{ log.otp_code }}</span>
+                        <span class="font-bold text-emerald-600 text-sm font-mono">{{ log.otp_code }}</span>
                       </div>
                       <p class="text-[11px] text-slate-500 leading-relaxed font-medium"><strong class="text-slate-700">SMS Content:</strong> {{ log.message }}</p>
                     </div>
@@ -1459,7 +1578,7 @@ def index():
                           </div>
                         </div>
 
-                        <!-- COLUMN 2: SMS -->
+                        <!-- COLUMN 2: SMS (Displays exact extracted numeric digit code in a customized box. Clicking copies full SMS) -->
                         <div class="p-3 flex flex-col justify-center min-w-0">
                           <p class="text-[9px] md:text-[10px] text-slate-400 font-extrabold uppercase tracking-tight mb-1">SMS MESSAGE</p>
                           
@@ -1468,14 +1587,15 @@ def index():
                           </div>
                           
                           <div v-else-if="alloc.status === 'completed'" class="flex flex-col gap-1 min-w-0">
-                            <div @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 p-1.5 rounded-xl text-emerald-800 text-center cursor-pointer active:scale-95 transition flex items-center justify-between gap-1 group min-w-0">
+                            <!-- Click handler configured to trigger full SMS message copy to clipboard instantly -->
+                            <div @click="copyFullSms(alloc.message, alloc.otp)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-400 p-2 rounded-xl text-emerald-800 text-center cursor-pointer active:scale-95 transition flex items-center justify-between gap-2 group min-w-0 shadow-xs">
                               <div class="text-left truncate">
-                                <span class="text-[8px] text-emerald-600 font-bold uppercase tracking-tight block">OTP Code</span>
-                                <span class="text-xs md:text-sm font-black text-emerald-800 tracking-wider block truncate">
-                                  {{ alloc.otp }}
+                                <span class="text-[8px] text-emerald-600 font-black uppercase tracking-tight block">OTP Code</span>
+                                <span class="text-xs md:text-base font-extrabold text-emerald-900 tracking-widest block truncate font-mono">
+                                  {{ displayOtp(alloc) }}
                                 </span>
                               </div>
-                              <i class="fa-regular fa-copy text-[9px] text-emerald-500 group-hover:text-emerald-700 shrink-0"></i>
+                              <i class="fa-regular fa-copy text-xs text-emerald-500 group-hover:text-emerald-700 shrink-0"></i>
                             </div>
                           </div>
                           
@@ -1513,19 +1633,17 @@ def index():
 
               </div>
 
-              <!-- ==================== SECTION 3: Console (Interactive Top-Apps Chart & 150 Limit Sorting) ==================== -->
+              <!-- ==================== SECTION 3: Console ==================== -->
               <div v-if="currentTab === 'console'" class="space-y-6">
                 
-                <!-- Reactive 3rd Image Chart Module (Top Apps used based on Console Logs) -->
                 <div v-if="topApps.list.length > 0" class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-6">
                   <div class="flex items-center gap-2 border-b pb-2">
                     <i class="fa-solid fa-chart-simple text-[#0088CC] text-md"></i>
                     <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest">Top Apps</h3>
                   </div>
 
-                  <!-- Vertical Columns Layout Chart representation -->
+                  <!-- Vertical Columns Layout Chart -->
                   <div class="relative h-56 border border-slate-100 bg-slate-50/30 rounded-2xl flex items-end justify-around pb-4 pt-8 px-6 gap-6">
-                    <!-- Dashed Lines Grid (Y-Axis references) -->
                     <div class="absolute inset-x-0 top-0 h-full flex flex-col justify-between pointer-events-none select-none opacity-30 p-4">
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
@@ -1533,7 +1651,6 @@ def index():
                       <div class="border-t border-dashed border-slate-200 w-full h-0"></div>
                     </div>
 
-                    <!-- Column Pillars rendering dynamically -->
                     <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="relative flex flex-col items-center group w-16 z-10 h-full justify-end">
                       <span class="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded font-black mb-2 shadow-xs">
                         {{ appItem.count }}
@@ -1544,7 +1661,6 @@ def index():
                     </div>
                   </div>
 
-                  <!-- Table Listing details matching Column indicators -->
                   <div class="space-y-2.5">
                     <div v-for="(appItem, idx) in topApps.list" :key="appItem.name" class="flex justify-between items-center text-xs font-semibold">
                       <div class="flex items-center gap-2">
@@ -1579,16 +1695,13 @@ def index():
                     <div v-for="log in liveLogs" :key="log.range + '_' + log.service + '_' + log.time" @click="copyToClipboard(log.range)" class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-[#0088CC] hover:bg-slate-50/50 transition duration-300 active:scale-[0.99] space-y-2">
                       <div class="flex justify-between items-start border-b border-slate-100 pb-1.5">
                         <div>
-                          <!-- Service Name in Bold -->
                           <span class="text-xs font-black text-[#0088CC] uppercase tracking-wide block">
                             {{ log.service }}
                           </span>
-                          <!-- Range ID below Service Name -->
                           <span class="text-[10px] font-bold text-slate-500 block mt-0.5">
                             {{ log.range }}
                           </span>
                         </div>
-                        <!-- Country Pill on the right -->
                         <span class="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded uppercase">
                           {{ log.country }}
                         </span>
@@ -1603,7 +1716,7 @@ def index():
                 </div>
               </div>
 
-              <!-- ==================== SECTION 4: Leaderboard (Dedicated secure tab) ==================== -->
+              <!-- ==================== SECTION 4: Leaderboard ==================== -->
               <div v-if="currentTab === 'leaderboard'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
                   <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1619,14 +1732,12 @@ def index():
                     </span>
                   </div>
 
-                  <!-- Leaderboard Filters Toggle -->
                   <div class="flex gap-2 text-xs font-black mt-5">
                     <button @click="leaderboardTab = 'today'" :class="leaderboardTab === 'today' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Today (25H)</button>
                     <button @click="leaderboardTab = 'weekly'" :class="leaderboardTab === 'weekly' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Weekend</button>
                     <button @click="leaderboardTab = 'lifetime'" :class="leaderboardTab === 'lifetime' ? 'bg-[#0088CC] text-white' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'" class="px-4 py-2 rounded-xl transition">Lifetime</button>
                   </div>
 
-                  <!-- Rankings list -->
                   <div class="space-y-3 mt-4">
                     <div v-for="(worker, idx) in leaderboardData[leaderboardTab]" :key="idx" class="flex justify-between items-center bg-slate-50/50 p-4 rounded-2xl border border-slate-200/60 text-xs">
                       <div class="flex items-center gap-3">
@@ -1668,7 +1779,6 @@ def index():
                   </div>
                 </div>
 
-                <!-- Withdrawal Request Form -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-800 flex items-center gap-2">
                     <i class="fa-solid fa-hand-holding-dollar text-emerald-600"></i> Withdraw Request
@@ -1762,25 +1872,23 @@ def index():
               <div v-if="currentTab === 'api-docs'" class="space-y-6">
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <div class="flex items-center gap-2">
-                    <i class="fa-solid fa-terminal text-[#0088CC] text-lg"></i>
+                    <i class="fa-solid fa-code text-[#0088CC] text-lg"></i>
                     <h2 class="text-md font-black text-slate-900">Mino API Documentation & Test Lab</h2>
                   </div>
-                  <!-- Base URL prominently highlighted at top of documentation block -->
                   <div class="p-4 bg-indigo-50 border border-indigo-200 rounded-2xl font-semibold text-xs leading-relaxed text-indigo-900">
                     <span class="text-[9px] uppercase font-black text-indigo-500 block mb-1">GLOBAL SERVER BASE PATH</span>
                     <strong class="font-mono text-sm tracking-wide select-all">{{ apiBaseUrl }}</strong>
                   </div>
                 </div>
 
-                <!-- API Routes Documentation -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-5">
                   <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest border-b pb-2">API Documentation Schemas</h3>
                   
                   <div class="space-y-6">
-                    <!-- POST Booking (Only one declared as POST) -->
+                    <!-- POST Booking -->
                     <div class="space-y-2">
                       <div class="flex items-center gap-2">
-                        <span class="bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded">POST</span>
+                        <span class="bg-rose-600 text-white text-[9px] font-black px-2 py-0.5 rounded">POST/GET</span>
                         <h4 class="text-xs font-black text-slate-800">1. Number Booking Endpoint</h4>
                       </div>
                       <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
@@ -1866,36 +1974,54 @@ def index():
   ]
 }</pre>
                     </div>
+
+                    <!-- GET/POST Check Status -->
+                    <div class="space-y-2 border-t pt-4">
+                      <div class="flex items-center gap-2">
+                        <span class="bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded">GET/POST</span>
+                        <h4 class="text-xs font-black text-slate-800">5. Check Number Status (Bot Friendly API)</h4>
+                      </div>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border">
+                        {{ apiBaseUrl }}/@public/api/check?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&number=+2250789538803
+                      </div>
+                      <p class="text-[10px] text-slate-400 font-bold uppercase mt-2">Example JSON Response:</p>
+                      <pre class="bg-slate-900 text-emerald-400 p-3 rounded-xl text-[9px] font-mono overflow-x-auto leading-relaxed border select-all">{
+  "status": "success",
+  "number": "+2250789538803",
+  "allocation_status": "completed",
+  "otp_code": "972450",
+  "full_sms": "Your Facebook code is 972450",
+  "created_at": "2026-06-22T10:10:05.123Z"
+}</pre>
+                    </div>
+
                   </div>
                 </div>
 
-                <!-- Live API Tester (Dynamic test engine for all 4 APIs) -->
+                <!-- Live API Tester -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="text-xs font-black text-slate-800 flex items-center gap-2">
-                    <i class="fa-solid fa-flask text-emerald-600"></i> Live API Tester
+                    <i class="fa-solid fa-flask text-[#0088CC]"></i> Live API Tester
                   </h3>
                   
                   <div class="grid sm:grid-cols-3 gap-3 text-xs font-bold">
-                    
-                    <!-- Dropdown api selector -->
                     <div>
                       <label class="text-slate-400">Select Target Endpoint</label>
                       <select v-model="selectedTestApi" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl font-semibold outline-none focus:border-[#0088CC]">
-                        <option value="getnum">getnum (Allocate Number - POST)</option>
+                        <option value="getnum">getnum (Allocate Number - POST/GET)</option>
                         <option value="liveaccess">liveaccess (Check Access Status - GET)</option>
                         <option value="success-otp">success-otp (Success logs - GET)</option>
                         <option value="console">console (Live Stream Logs - GET)</option>
+                        <option value="check">check (Status Check - GET/POST)</option>
                       </select>
                     </div>
 
-                    <!-- Input range (conditional display) -->
-                    <div v-if="selectedTestApi === 'getnum'">
-                      <label class="text-slate-400">Target Range ID</label>
-                      <input type="text" v-model="testRange" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    <div v-if="selectedTestApi === 'getnum' || selectedTestApi === 'check'">
+                      <label class="text-slate-400">{{ selectedTestApi === 'getnum' ? 'Target Range ID' : 'Target Number' }}</label>
+                      <input type="text" v-model="testRange" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl font-mono" />
                     </div>
 
-                    <!-- Exec button -->
-                    <div class="flex items-end" :class="selectedTestApi !== 'getnum' ? 'col-span-2' : ''">
+                    <div class="flex items-end" :class="selectedTestApi !== 'getnum' && selectedTestApi !== 'check' ? 'col-span-2' : ''">
                       <button @click="runLiveApiTest" :disabled="testApiLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl transition flex items-center justify-center gap-1.5 disabled:bg-slate-200">
                         <i v-if="testApiLoading" class="fa-solid fa-spinner animate-spin"></i>
                         <span>Execute API Test</span>
@@ -1904,7 +2030,6 @@ def index():
 
                   </div>
 
-                  <!-- Test Response -->
                   <div v-if="testApiResponse" class="mt-3">
                     <span class="text-[9px] text-slate-400 font-bold uppercase block mb-1">API Response Payload (402 returned on auth failure):</span>
                     <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[10px] font-mono overflow-x-auto select-all leading-relaxed shadow-inner">{{ testApiResponse }}</pre>
@@ -1961,30 +2086,24 @@ def index():
             const showToast = ref(false);
             const toastMessage = ref('');
             
-            // Dedicated Polling Timers for Performance Tuning
             let generalTimer = null;
             let consoleTimer = null;
 
-            // Live Test Lab Variables
             const selectedTestApi = ref('getnum');
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
             const apiBaseUrl = ref(window.location.origin);
 
-            // Chart colors configuration
             const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
             const dotColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500'];
 
-            // Leaderboard Reactive Module
             const leaderboardTab = ref('today');
             const leaderboardData = ref({ today: [], weekly: [], lifetime: [] });
 
-            // Withdrawal Variables 
             const withdrawAmount = ref('');
             const withdrawMethod = ref('TRC20');
 
-            // Dynamic active service payout rates list 
             const serviceRates = ref({
               facebook: { rate: 0.40, status: 'ON' },
               instagram: { rate: 0.40, status: 'ON' },
@@ -1993,6 +2112,21 @@ def index():
               google: { rate: 0.40, status: 'ON' },
               generic: { rate: 0.40, status: 'ON' }
             });
+
+            // Fallback parsing engine for extracting digits in historical/bugged database records
+            const displayOtp = (alloc) => {
+              if (!alloc.otp) return 'N/A';
+              if (alloc.otp === 'SUCCESS' && alloc.message) {
+                const match = alloc.message.match(/\\b\\d{4,9}\\b/);
+                if (match) return match[0];
+                const anyDigits = alloc.message.match(/\\d+/g);
+                if (anyDigits) {
+                  const longest = anyDigits.reduce((a, b) => a.length > b.length ? a : b);
+                  return longest.slice(0, 9);
+                }
+              }
+              return alloc.otp;
+            };
 
             const playBeep = () => {
               try {
@@ -2025,9 +2159,11 @@ def index():
               triggerToast("Copied: " + text);
             };
 
-            const copyFullSms = (messageText) => {
-              if (!messageText) return;
-              navigator.clipboard.writeText(messageText);
+            // Custom click-and-copy behavior supporting fallback variables
+            const copyFullSms = (messageText, fallbackOtp) => {
+              const textToCopy = messageText || fallbackOtp || "";
+              if (!textToCopy) return;
+              navigator.clipboard.writeText(textToCopy);
               triggerToast("Full OTP SMS message copied! ✅");
             };
 
@@ -2085,14 +2221,10 @@ def index():
 
             const startPolling = () => {
               stopPolling();
-              
-              // Run initial fetch immediately
               fetchGeneralData();
               fetchConsoleData();
-              
-              // Set up separate polling intervals
-              generalTimer = setInterval(fetchGeneralData, 5000); // 5 seconds for general data (safe DB quota)
-              consoleTimer = setInterval(fetchConsoleData, 2000); // 2 seconds for high performance logs update
+              generalTimer = setInterval(fetchGeneralData, 5000);
+              consoleTimer = setInterval(fetchConsoleData, 2000); 
             };
 
             const stopPolling = () => {
@@ -2106,7 +2238,6 @@ def index():
               }
             };
 
-            // Merging logic with 150 items maximum upper limit limit
             const mergeLogs = (newLogs) => {
               newLogs.forEach(newLog => {
                 const key = `${newLog.range}_${newLog.service}_${newLog.time}`;
@@ -2114,21 +2245,17 @@ def index():
                   `${existingLog.range}_${existingLog.service}_${existingLog.time}` === key
                 );
                 if (!exists) {
-                  // New elements unshifted gracefully on top of list
                   liveLogs.value.unshift(newLog);
                 }
               });
 
-              // Sorting by time stamp descending so newest logs reside on top
               liveLogs.value.sort((a, b) => b.time - a.time);
 
-              // Strict truncation of older indices when total elements exceed exactly 150
               if (liveLogs.value.length > 150) {
                 liveLogs.value = liveLogs.value.slice(0, 150);
               }
             };
 
-            // Dynamic aggregation counting and sorting of top tracked services in chart indicators
             const topApps = computed(() => {
               const counts = {};
               let total = 0;
@@ -2150,7 +2277,6 @@ def index():
               return { list: list.slice(0, 4), total };
             });
 
-            // Dedicated Console Signal Fetching (Runs every 2 seconds)
             const fetchConsoleData = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token) return;
@@ -2167,7 +2293,6 @@ def index():
               }
             };
 
-            // Dedicated General User Details Fetching (Runs every 5 seconds)
             const fetchGeneralData = async () => {
               const token = localStorage.getItem('mino_session_token');
               if (!token) {
@@ -2175,7 +2300,6 @@ def index():
                 return;
               }
 
-              // 1. Fetch User Profile Details
               try {
                 const profileRes = await fetch('/api/v1/auth/me', {
                   headers: { 'Authorization': `Bearer ${token}` }
@@ -2202,7 +2326,6 @@ def index():
 
               userLoaded.value = true; 
 
-              // 2. Poll active number allocations
               if (profile.value) {
                 try {
                   const allocRes = await fetch('/api/v1/user-allocations', {
@@ -2227,7 +2350,6 @@ def index():
                 } catch (e) {}
               }
 
-              // 3. Fetch Dashboard OTP Report data
               if (profile.value) {
                 try {
                   const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''), {
@@ -2240,7 +2362,6 @@ def index():
                 } catch (e) {}
               }
 
-              // 4. Fetch Leaderboard Ratings
               try {
                 const boardRes = await fetch('/api/v1/leaderboard', {
                   headers: { 'Authorization': `Bearer ${token}` }
@@ -2253,7 +2374,6 @@ def index():
                 }
               } catch (e) {}
 
-              // 5. Fetch current active service rates
               try {
                 const ratesRes = await fetch('/api/v1/user/service-rates');
                 const ratesData = await ratesRes.json();
@@ -2366,6 +2486,7 @@ def index():
                   });
                   const postData = await postRes.json();
                   testApiResponse.value = JSON.stringify(postData, null, 2);
+                  testApiLoading.value = false;
                   return;
                 } else if (selectedTestApi.value === 'liveaccess') {
                   url = `/@public/api/liveaccess?api_key=${profile.value.api_key}`;
@@ -2373,6 +2494,8 @@ def index():
                   url = `/@public/api/success-otp?api_key=${profile.value.api_key}`;
                 } else if (selectedTestApi.value === 'console') {
                   url = `/@public/api/console?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'check') {
+                  url = `/@public/api/check?api_key=${profile.value.api_key}&number=${testRange.value}`;
                 }
                 const res = await fetch(url);
                 const data = await res.json();
@@ -2456,7 +2579,6 @@ def index():
                 const data = await res.json();
                 if (data.status === 'success') {
                   triggerToast("Number successfully allocated!");
-                  // Automatically copy allocated number to clipboard as requested
                   if (data.number) {
                     copyToClipboard(data.number);
                   }
@@ -2491,7 +2613,7 @@ def index():
               currentTab, announcement, mobileMenuOpen, navigateMobile, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
               allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
-              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
+              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp, displayOtp,
               apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
               barColors, dotColors, topApps, leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal, serviceRates
             };
@@ -2869,7 +2991,7 @@ def admin_portal():
                           </td>
                           <td class="p-4 font-black text-slate-900">{{ log.number }}</td>
                           <td class="p-4 uppercase text-[#0088CC] font-black text-[10px]">{{ log.service }}</td>
-                          <td class="p-4 font-black text-emerald-600 text-sm">{{ log.otpCode }}</td>
+                          <td class="p-4 font-black text-emerald-600 text-sm font-mono">{{ log.otpCode }}</td>
                           <td class="p-4 text-slate-500 leading-relaxed max-w-xs truncate" :title="log.message">{{ log.message }}</td>
                           <td class="p-4 font-black text-slate-900">৳ {{ parseFloat(log.revenue || 0).toFixed(2) }}</td>
                           <td class="p-4 font-mono text-slate-400 text-[10px]">{{ formatTimestamp(log.createdAt) }}</td>
@@ -2883,7 +3005,6 @@ def admin_portal():
               <!-- ==================== Tab 6: System Settings & Controls ==================== -->
               <div v-if="currentTab === 'settings'" class="space-y-6">
                 
-                <!-- Service Specific Payout Rates & Control Status Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration (৳)
@@ -2898,12 +3019,10 @@ def admin_portal():
                         {{ svcName }}
                       </span>
                       <div class="flex items-center gap-3 w-full sm:w-auto">
-                        <!-- Rate Input -->
                         <div class="flex items-center bg-white border rounded-xl px-2.5 py-1">
                           <span class="text-[10px] font-bold text-slate-400 mr-1.5">৳</span>
                           <input type="number" step="0.01" v-model="svcConfig.rate" class="w-16 text-xs font-black text-slate-800 outline-none" placeholder="0.40" />
                         </div>
-                        <!-- ON/OFF Status Toggle Button Control -->
                         <button @click="svcConfig.status = (svcConfig.status === 'ON' ? 'OFF' : 'ON')" :class="svcConfig.status === 'ON' ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-rose-600 text-white border-rose-700'" class="px-3.5 py-1.5 rounded-xl text-[10px] font-black border transition select-none tracking-wider">
                           {{ svcConfig.status === 'ON' ? 'ACTIVE (ON)' : 'MUTED (OFF)' }}
                         </button>
@@ -2916,7 +3035,6 @@ def admin_portal():
                   </button>
                 </div>
 
-                <!-- Announcement Banner Controls -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <i class="fa-solid fa-bullhorn text-rose-600"></i> Global Announcement Control Banner
@@ -2927,7 +3045,6 @@ def admin_portal():
                   </button>
                 </div>
 
-                <!-- Database Backup and Monitoring Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
                     <i class="fa-solid fa-database text-rose-600"></i> Database Backup & Security Monitoring
@@ -2985,7 +3102,6 @@ def admin_portal():
 
             const announcementInput = ref('');
 
-            // Dynamic service payout rates configurations
             const serviceRates = ref({
               facebook: { rate: 0.40, status: 'ON' },
               instagram: { rate: 0.40, status: 'ON' },
@@ -3055,7 +3171,6 @@ def admin_portal():
                 return;
               }
               try {
-                // 1. Fetch Stats
                 const statRes = await fetch('/api/v1/admin/dashboard', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -3067,7 +3182,6 @@ def admin_portal():
                 const statData = await statRes.json();
                 if (statData.status === 'success') stats.value = statData.stats;
 
-                // 2. Fetch Users
                 const userRes = await fetch('/api/v1/admin/users', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -3079,7 +3193,6 @@ def admin_portal():
                 const userData = await userRes.json();
                 if (userData.status === 'success') users.value = userData.users;
 
-                // 3. Fetch allocations
                 const allocRes = await fetch('/api/v1/admin/allocations', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -3091,7 +3204,6 @@ def admin_portal():
                 const allocData = await allocRes.json();
                 if (allocData.status === 'success') allocations.value = allocData.allocations;
 
-                // 4. Fetch OTP Logs
                 const logRes = await fetch('/api/v1/admin/otp-logs', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -3103,7 +3215,6 @@ def admin_portal():
                 const logData = await logRes.json();
                 if (logData.status === 'success') otpLogs.value = logData.otp_logs;
 
-                // 5. Fetch Withdrawals
                 const wdRes = await fetch('/api/v1/admin/withdrawals', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
@@ -3115,7 +3226,6 @@ def admin_portal():
                 const wdData = await wdRes.json();
                 if (wdData.status === 'success') withdrawals.value = wdData.withdrawals;
 
-                // 6. Fetch Service-specific Rates
                 const ratesRes = await fetch('/api/v1/admin/settings/service-rates', {
                   headers: { 'Authorization': `Bearer ${adminToken.value}` }
                 });
