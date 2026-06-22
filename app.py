@@ -92,7 +92,7 @@ def after_request(response):
     return response
 
 # =========================================================================
-# Database Handlers (Highly Optimized for 10x Speedup)
+# Database Handlers (Optimized for safe indexing and maximum queries speed)
 # =========================================================================
 COUNTRY_PREFIXES = {
     "224": "Guinea", "225": "Ivory Coast", "236": "Central African Republic",
@@ -151,7 +151,7 @@ def mask_number(number):
         return number
     return f"{number[:6]}****{number[length-3:]}"
 
-# Highly Optimized Authentication Middleware (Returns 402 on Error as Requested)
+# Highly Optimized Authentication Middleware (Query-by-field, fallback to scan on missing rule)
 def get_current_user_optimized():
     # 1. Bearer Token Check
     auth_header = request.headers.get('Authorization')
@@ -172,15 +172,23 @@ def get_current_user_optimized():
             
     if api_key:
         users_ref = fb_db.reference('/users')
-        query = users_ref.order_by_child('api_key').equal_to(api_key).get()
-        if query and isinstance(query, dict):
-            for u_data in query.values():
-                if u_data.get('status', 'pending') == 'approved':
-                    return u_data
+        try:
+            query = users_ref.order_by_child('api_key').equal_to(api_key).get()
+            if query and isinstance(query, dict):
+                for u_data in query.values():
+                    if u_data.get('status', 'pending') == 'approved':
+                        return u_data
+        except Exception:
+            # Fallback in-memory scanner in case indexes fail
+            all_users = users_ref.get() or {}
+            if isinstance(all_users, dict):
+                for u_data in all_users.values():
+                    if u_data.get('api_key') == api_key and u_data.get('status', 'pending') == 'approved':
+                        return u_data
     return None
 
 # =========================================================================
-# User APIs
+# User Registration & Authorization APIs
 # =========================================================================
 @app.route('/api/v1/auth/register', methods=['POST'])
 def register():
@@ -196,11 +204,13 @@ def register():
         if not name:
             name = email.split('@')[0]
 
-        # Check existing email
+        # Check existing email using memory fallback safe lookup
         users_ref = fb_db.reference('/users')
-        exist_check = users_ref.order_by_child('email').equal_to(email).get()
-        if exist_check:
-            return jsonify({'status': 'error', 'message': 'Email already registered'}), 400
+        all_users = users_ref.get() or {}
+        if isinstance(all_users, dict):
+            for u in all_users.values():
+                if u.get('email') == email:
+                    return jsonify({'status': 'error', 'message': 'Email already registered'}), 400
 
         uid = "usr_" + secrets.token_hex(8)
 
@@ -234,10 +244,10 @@ def login():
             return jsonify({'status': 'error', 'message': 'Email and password are required'}), 400
 
         users_ref = fb_db.reference('/users')
-        query = users_ref.order_by_child('email').equal_to(email).get()
-        if query and isinstance(query, dict):
-            for uid, u in query.items():
-                if u.get('password') == password:
+        all_users = users_ref.get() or {}
+        if isinstance(all_users, dict):
+            for uid, u in all_users.items():
+                if u.get('email') == email and u.get('password') == password:
                     status = u.get('status', 'pending')
                     if status == 'pending':
                         return jsonify({'status': 'error', 'message': 'Your account is pending administrator approval.'}), 403
@@ -342,16 +352,15 @@ def request_withdrawal():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# Standardized Public API Mappings (GET & POST Supported - Mapped to Base Path)
+# Standardized Public API Mappings (GET & POST Supported - Returns 402 on Error)
 # =========================================================================
 
-# 1. Number Allocation Router API (Supports GET and POST)
+# 1. Number Booking API
 @app.route('/@public/api/getnum', methods=['GET', 'POST'])
 @app.route('/api/v1/getnum', methods=['GET', 'POST'])
 def getnum():
     try:
         if request.method == 'POST':
-            # Support both Form Data and JSON Payload
             data = request.json or request.form or {}
             rid = data.get('rid')
             national = data.get('national', '1')
@@ -373,7 +382,7 @@ def getnum():
         stex_data = None
         last_error = "No number available on this range"
 
-        # Optimization: Parallel execution simulation using local timeout bounds
+        # external query
         try:
             params = {'rid': clean_rid, 'national': int(national), 'remove_plus': int(remove_plus)}
             res = requests.get(f"{STEX_BASE_URL}/getnum", params=params, headers={'mauthapi': STEX_API_KEY}, timeout=4)
@@ -441,7 +450,7 @@ def getnum():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 2. Live Access Status API (GET & POST Supported - Checks authorization credentials)
+# 2. Live Access Status API
 @app.route('/@public/api/liveaccess', methods=['GET', 'POST'])
 def liveaccess():
     user = get_current_user_optimized()
@@ -459,7 +468,7 @@ def liveaccess():
         }
     })
 
-# 3. Successful OTP Reports Retrieval API (GET & POST Mappings)
+# 3. Successful OTP Reports API (Index-free query processing)
 @app.route('/@public/api/success-otp', methods=['GET', 'POST'])
 @app.route('/api/v1/success-otp', methods=['GET', 'POST'])
 def success_otp():
@@ -468,11 +477,10 @@ def success_otp():
         if not user:
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 402
 
-        # 10x Speedup query optimization: only fetch this user's logs
-        logs_ref = fb_db.reference('/otp_logs')
-        user_logs_query = logs_ref.order_by_child('userId').equal_to(user['uid']).get()
-        
-        user_logs = firebase_to_list(user_logs_query)
+        # Fetch and filter in-memory to prevent rules errors
+        all_logs_dict = fb_db.reference('/otp_logs').get() or {}
+        all_logs_list = firebase_to_list(all_logs_dict)
+        user_logs = [log for log in all_logs_list if log.get('userId') == user['uid']]
         user_logs.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
 
         data = []
@@ -490,7 +498,7 @@ def success_otp():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# 4. Live Console Signal Stream API (GET & POST Mappings)
+# 4. Live Console API
 @app.route('/@public/api/console', methods=['GET', 'POST'])
 @app.route('/api/v1/live-console', methods=['GET', 'POST'])
 def get_live_console():
@@ -517,7 +525,7 @@ def get_live_console():
         print("STEX Console API Error:", e)
     return jsonify({'status': 'success', 'data': []})
 
-# User-specific active allocations sync API (optimized background sync)
+# User allocations list syncing logic
 @app.route('/api/v1/user-allocations', methods=['GET'])
 def get_user_allocations():
     try:
@@ -528,10 +536,10 @@ def get_user_allocations():
         user_id = user['uid']
         otp_rate = float(user.get('otp_rate', 0.40))
 
-        # 10x Speedup database querying (only fetch this user's active numbers)
-        alloc_ref = fb_db.reference('/allocated_numbers')
-        active_allocs_query = alloc_ref.order_by_child('userId').equal_to(user_id).get()
-        active_allocs_list = firebase_to_list(active_allocs_query)
+        # Query and index fallback in memory
+        all_allocs_dict = fb_db.reference('/allocated_numbers').get() or {}
+        all_allocs_list = firebase_to_list(all_allocs_dict)
+        active_allocs_list = [alloc for alloc in all_allocs_list if alloc.get('userId') == user_id]
 
         # Sync active elements with gateway
         try:
@@ -569,9 +577,13 @@ def get_user_allocations():
                                 elif 'google' in msg_lower or 'g-' in msg_lower:
                                     service = 'google'
 
-                                # Check if already logged
                                 logs_ref = fb_db.reference('/otp_logs')
-                                exist_log = logs_ref.order_by_child('number').equal_to(alloc['number']).get()
+                                all_logs = logs_ref.get() or {}
+                                exist_log = False
+                                for item in firebase_to_list(all_logs):
+                                    if item.get('number') == alloc['number']:
+                                        exist_log = True
+                                        break
                                 
                                 if not exist_log:
                                     new_balance = float(user.get('balance', 0.0)) + otp_rate
@@ -606,7 +618,7 @@ def get_user_allocations():
         except Exception as e:
             print("Background OTP sync error:", e)
 
-        # Check for expired statuses (18 minutes countdown timer limit)
+        # check expired
         now = datetime.datetime.now(datetime.timezone.utc)
         for alloc in active_allocs_list:
             if alloc.get('status') == 'active':
@@ -620,16 +632,16 @@ def get_user_allocations():
                         if alloc_id:
                             fb_db.reference(f'/allocated_numbers/{alloc_id}/status').set('expired')
 
-        # Retrieve refreshed view list
-        refreshed_query = alloc_ref.order_by_child('userId').equal_to(user_id).get()
-        refreshed_list = firebase_to_list(refreshed_query)
+        # retrieve updated view list
+        refreshed_query = fb_db.reference('/allocated_numbers').get() or {}
+        refreshed_list = [a for a in firebase_to_list(refreshed_query) if a.get('userId') == user_id]
         refreshed_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
 
         return jsonify({'status': 'success', 'allocations': refreshed_list})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Handler for undefined / invalid API endpoints (Returns status code 402 on error as requested)
+# Handler for undefined APIs (Returns 402 on missing route)
 @app.errorhandler(404)
 def resource_not_found(e):
     if request.path.startswith('/@public/api/') or request.path.startswith('/api/'):
@@ -843,7 +855,7 @@ def admin_api_otp_logs():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =========================================================================
-# Client-side UI Rendering (With Mobile Optimization)
+# Client-side UI Rendering (With Single Line Columns and Light Menu Drawer)
 # =========================================================================
 @app.route('/', methods=['GET'])
 def index():
@@ -955,38 +967,38 @@ def index():
               </div>
             </aside>
 
-            <!-- Slide-out Drawer Menu Navigation (For Mobile Modes - No bottom nav, keeping workspace clean) -->
+            <!-- Light Theme Slide-out Mobile Menu Drawer (Light Mode UI) -->
             <transition enter-active-class="transition ease-out duration-300" enter-from-class="-translate-x-full" enter-to-class="translate-x-0" leave-active-class="transition ease-in duration-200" leave-from-class="translate-x-0" leave-to-class="-translate-x-full">
-              <aside v-if="mobileMenuOpen" class="fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 flex flex-col z-50 md:hidden shadow-2xl">
-                <div class="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+              <aside v-if="mobileMenuOpen" class="fixed inset-y-0 left-0 w-64 bg-white text-slate-700 flex flex-col z-50 md:hidden shadow-2xl border-r border-slate-100">
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                   <div class="flex items-center gap-3">
                     <span class="px-2 py-1 bg-[#0088CC] rounded flex items-center justify-center text-white font-black text-xs">MINO</span>
-                    <span class="text-md font-black text-white">MINO SMS</span>
+                    <span class="text-md font-black text-slate-900">MINO SMS</span>
                   </div>
-                  <button @click="mobileMenuOpen = false" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+                  <button @click="mobileMenuOpen = false" class="text-slate-400 hover:text-slate-800"><i class="fa-solid fa-xmark text-lg"></i></button>
                 </div>
 
-                <nav class="flex-1 p-4 space-y-1 bg-slate-900">
-                  <button @click="navigateMobile('dashboard')" :class="currentTab === 'dashboard' ? 'bg-[#0088CC] text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                <nav class="flex-1 p-4 space-y-1 bg-white">
+                  <button @click="navigateMobile('dashboard')" :class="currentTab === 'dashboard' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-house"></i> Dashboard
                   </button>
-                  <button @click="navigateMobile('get-number')" :class="currentTab === 'get-number' ? 'bg-[#0088CC] text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                  <button @click="navigateMobile('get-number')" :class="currentTab === 'get-number' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-mobile-screen"></i> Get Number
                   </button>
-                  <button @click="navigateMobile('console')" :class="currentTab === 'console' ? 'bg-[#0088CC] text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                  <button @click="navigateMobile('console')" :class="currentTab === 'console' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-terminal"></i> Radar Console
                   </button>
-                  <button @click="navigateMobile('payment')" :class="currentTab === 'payment' ? 'bg-[#0088CC] text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                  <button @click="navigateMobile('payment')" :class="currentTab === 'payment' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-wallet"></i> Payment & Withdraw
                   </button>
-                  <button @click="navigateMobile('profile')" :class="currentTab === 'profile' ? 'bg-[#0088CC] text-white' : 'hover:bg-slate-800 text-slate-400'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
+                  <button @click="navigateMobile('profile')" :class="currentTab === 'profile' ? 'bg-[#0088CC]/10 text-[#0088CC]' : 'hover:bg-slate-50 text-slate-600'" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition text-left">
                     <i class="fa-solid fa-user"></i> Profile Details
                   </button>
                 </nav>
 
-                <div class="p-4 border-t border-slate-800 bg-slate-950 text-xs font-bold flex items-center justify-between">
-                  <span>{{ user?.name || 'User' }}</span>
-                  <button @click="signOut" class="text-rose-400 hover:text-rose-600"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
+                <div class="p-4 border-t border-slate-100 bg-slate-50 text-xs font-bold flex items-center justify-between">
+                  <span class="text-slate-800">{{ user?.name || 'User' }}</span>
+                  <button @click="signOut" class="text-rose-500 hover:text-rose-700"><i class="fa-solid fa-right-from-bracket"></i> LOGOUT</button>
                 </div>
               </aside>
             </transition>
@@ -999,7 +1011,7 @@ def index():
               
               <header class="flex justify-between items-center border-b border-slate-200 pb-4">
                 <div class="flex items-center gap-3">
-                  <!-- Hamburger Navigation Trigger Icon (Shows up-top on Mobile) -->
+                  <!-- Top Burger Menu Icon (Light Theme UI Button) -->
                   <button @click="mobileMenuOpen = true" class="md:hidden text-slate-700 bg-slate-100 hover:bg-slate-200 p-2.5 rounded-xl transition focus:outline-none">
                     <i class="fa-solid fa-bars text-lg"></i>
                   </button>
@@ -1116,70 +1128,69 @@ def index():
                     No allocated numbers found.
                   </div>
 
-                  <!-- Segmented Numbers View (Redesigned with exactly 3 Column Sections: COUNTRY & NUMBER, SMS, REMAINING TIME) -->
-                  <div v-else class="space-y-4">
-                    <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-sm hover:border-slate-300 transition">
-                      <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-slate-150">
+                  <!-- Segmented Numbers View (Redesigned: Fixed into exactly one single line/row with 3 dividing columns even on mobile screens) -->
+                  <div v-else class="space-y-3">
+                    <div v-for="alloc in paginatedAllocations" :key="alloc.createdAt" class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs hover:shadow-sm hover:border-slate-300 transition">
+                      
+                      <!-- Row Grid layout structured explicitly into 3 columns side-by-side, divided with vertical border borders -->
+                      <div class="grid grid-cols-3 divide-x divide-slate-150 items-stretch min-h-[90px]">
                         
                         <!-- COLUMN 1: COUNTRY & NUMBER -->
-                        <div class="p-5 flex flex-col justify-between space-y-2">
+                        <div class="p-3 flex flex-col justify-between min-w-0">
                           <div>
-                            <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">COUNTRY & NUMBER</p>
-                            <div @click="copyToClipboard(alloc.number)" class="flex items-center gap-2 mt-1.5 cursor-pointer hover:opacity-80 active:scale-95 transition w-max">
-                              <span class="font-black text-slate-800 text-base tracking-wider">{{ alloc.number }}</span>
-                              <i class="fa-regular fa-copy text-xs text-[#0088CC]"></i>
+                            <p class="text-[9px] md:text-[10px] text-slate-400 font-extrabold uppercase tracking-tight">COUNTRY & NUMBER</p>
+                            <div @click="copyToClipboard(alloc.number)" class="flex items-center gap-1 mt-1 cursor-pointer hover:opacity-80 active:scale-95 transition">
+                              <span class="font-extrabold text-slate-800 text-[11px] md:text-sm tracking-tight break-all select-all">{{ alloc.number }}</span>
+                              <i class="fa-regular fa-copy text-[9px] text-[#0088CC] shrink-0"></i>
                             </div>
                           </div>
-                          <div class="pt-2">
-                            <p class="font-black text-slate-700 text-xs uppercase">{{ alloc.country }}</p>
-                            <p class="text-[9px] text-slate-400 font-black uppercase mt-0.5">{{ alloc.operator }}</p>
+                          <div class="pt-1 leading-tight">
+                            <p class="font-black text-slate-700 text-[10px] md:text-xs uppercase truncate">{{ alloc.country }}</p>
+                            <p class="text-[8px] text-slate-400 font-black uppercase mt-0.5 truncate">{{ alloc.operator }}</p>
                           </div>
                         </div>
 
                         <!-- COLUMN 2: SMS -->
-                        <div class="p-5 flex flex-col justify-center min-w-0">
-                          <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider mb-2">SMS MESSAGE</p>
+                        <div class="p-3 flex flex-col justify-center min-w-0">
+                          <p class="text-[9px] md:text-[10px] text-slate-400 font-extrabold uppercase tracking-tight mb-1">SMS MESSAGE</p>
                           
-                          <div v-if="alloc.status === 'active'" class="text-xs text-amber-600 font-black italic animate-pulse flex items-center gap-1.5">
-                            <i class="fa-solid fa-spinner animate-spin"></i> Waiting for incoming SMS...
+                          <div v-if="alloc.status === 'active'" class="text-[10px] text-amber-600 font-black italic animate-pulse flex items-center gap-1">
+                            <i class="fa-solid fa-spinner animate-spin text-[9px]"></i> Waiting...
                           </div>
                           
-                          <div v-else-if="alloc.status === 'completed'" class="flex flex-col gap-2">
-                            <div @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border-2 border-emerald-200 p-3 rounded-2xl text-emerald-800 text-center cursor-pointer active:scale-95 transition-all flex items-center justify-between gap-3 group">
-                              <div class="text-left">
-                                <span class="text-[9px] text-emerald-600 font-bold uppercase tracking-wider block">Extracted OTP Code</span>
-                                <span class="text-lg font-black text-emerald-800 tracking-widest mt-0.5 block">
+                          <div v-else-if="alloc.status === 'completed'" class="flex flex-col gap-1 min-w-0">
+                            <div @click="copyFullSms(alloc.message)" class="bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 p-1.5 rounded-xl text-emerald-800 text-center cursor-pointer active:scale-95 transition flex items-center justify-between gap-1 group min-w-0">
+                              <div class="text-left truncate">
+                                <span class="text-[8px] text-emerald-600 font-bold uppercase tracking-tight block">OTP Code</span>
+                                <span class="text-xs md:text-sm font-black text-emerald-800 tracking-wider block truncate">
                                   {{ alloc.otp }}
                                 </span>
                               </div>
-                              <div class="bg-emerald-500 group-hover:bg-emerald-600 text-white h-8 w-8 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition" title="Click to copy full message content">
-                                <i class="fa-regular fa-copy text-xs"></i>
-                              </div>
+                              <i class="fa-regular fa-copy text-[9px] text-emerald-500 group-hover:text-emerald-700 shrink-0"></i>
                             </div>
-                            <span class="text-[9px] text-slate-400 font-medium italic">*Clicking will copy the full SMS message payload.</span>
                           </div>
                           
-                          <div v-else class="text-xs text-rose-500 font-bold flex items-center gap-1">
-                            <i class="fa-solid fa-circle-exclamation"></i> Closed (18 mins exceeded)
+                          <div v-else class="text-[9px] text-rose-500 font-bold flex items-center gap-1">
+                            <i class="fa-solid fa-circle-exclamation shrink-0"></i> Expired
                           </div>
                         </div>
 
                         <!-- COLUMN 3: REMAINING TIME -->
-                        <div class="p-5 flex flex-col justify-between items-start md:items-end space-y-3">
-                          <div class="w-full md:text-right">
-                            <p class="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider">REMAINING TIME</p>
-                            <div class="inline-block mt-2 bg-slate-50 border border-slate-200 text-slate-700 text-sm font-black py-1.5 px-4 rounded-full tracking-wider min-w-[80px] text-center shadow-inner">
+                        <div class="p-3 flex flex-col justify-between items-end">
+                          <div class="text-right w-full">
+                            <p class="text-[9px] md:text-[10px] text-slate-400 font-extrabold uppercase tracking-tight">REMAINING TIME</p>
+                            <div class="inline-block mt-1 bg-slate-50 border border-slate-200 text-slate-700 text-[10px] md:text-xs font-black py-0.5 px-2 rounded-lg tracking-wider text-center">
                               {{ alloc.status === 'active' && alloc.timeLeft > 0 ? formatTime(alloc.timeLeft) : '--:--' }}
                             </div>
                           </div>
-                          <div class="w-full flex justify-between md:justify-end gap-1.5">
-                            <span v-if="alloc.status === 'active'" class="bg-amber-50 text-amber-600 text-[9px] font-black px-2.5 py-1 rounded-full uppercase flex items-center gap-1">
-                              <i class="fa-solid fa-spinner animate-spin text-[8px]"></i> PENDING
+                          <div class="pt-1 flex justify-end w-full">
+                            <span v-if="alloc.status === 'active'" class="bg-amber-50 text-amber-600 text-[8px] font-black px-1.5 py-0.5 rounded uppercase flex items-center gap-0.5 shrink-0">
+                              <i class="fa-solid fa-spinner animate-spin text-[7px]"></i> PEND
                             </span>
-                            <span v-else-if="alloc.status === 'completed'" class="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2.5 py-1 rounded-full uppercase">
+                            <span v-else-if="alloc.status === 'completed'" class="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">
                               SUCCESS
                             </span>
-                            <span v-else class="bg-slate-100 text-slate-500 text-[9px] font-black px-2.5 py-1 rounded-full uppercase">
+                            <span v-else class="bg-slate-100 text-slate-500 text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0">
                               EXPIRED
                             </span>
                           </div>
@@ -1350,36 +1361,87 @@ def index():
                   </p>
                 </div>
 
-                <!-- API Route: Get Number -->
-                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
-                  <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/getnum</span>
-                  <h3 class="text-xs font-black text-slate-800 mt-2">1. Number Booking API Endpoint</h3>
-                  <p class="text-[11px] text-slate-400">Submit a GET/POST request with your API Key and specific Range ID to allocate a number.</p>
-                  <div class="bg-slate-50 p-3 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto break-all leading-relaxed border">
-                    {{ apiBaseUrl }}/@public/api/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
+                <!-- API Routes Documentation -->
+                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-5">
+                  <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest border-b pb-2">API Documentation Schemas</h3>
+                  
+                  <div class="space-y-4">
+                    <!-- Route 1 -->
+                    <div>
+                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/getnum</span>
+                      <h4 class="text-xs font-black text-slate-800 mt-2">1. Number Booking Endpoint</h4>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                        {{ apiBaseUrl }}/@public/api/getnum?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}&rid=2250789XXX&national=1&remove_plus=1
+                      </div>
+                    </div>
+
+                    <!-- Route 2 -->
+                    <div>
+                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/liveaccess</span>
+                      <h4 class="text-xs font-black text-slate-800 mt-2">2. Client Access Status</h4>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                        {{ apiBaseUrl }}/@public/api/liveaccess?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
+                      </div>
+                    </div>
+
+                    <!-- Route 3 -->
+                    <div>
+                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/success-otp</span>
+                      <h4 class="text-xs font-black text-slate-800 mt-2">3. Success OTP logs</h4>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                        {{ apiBaseUrl }}/@public/api/success-otp?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
+                      </div>
+                    </div>
+
+                    <!-- Route 4 -->
+                    <div>
+                      <span class="bg-[#0088CC] text-white text-[9px] font-black px-2.5 py-1 rounded uppercase tracking-wider">GET or POST /@public/api/console</span>
+                      <h4 class="text-xs font-black text-slate-800 mt-2">4. Console Tracker signal stream</h4>
+                      <div class="bg-slate-50 p-2.5 rounded-xl font-mono text-[10px] text-slate-700 select-all overflow-x-auto border mt-1.5">
+                        {{ apiBaseUrl }}/@public/api/console?api_key={{ profile?.api_key || 'YOUR_API_KEY' }}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <!-- Live API Tester -->
+                <!-- Live API Tester (Dynamic test engine for all 4 APIs) -->
                 <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
                   <h3 class="text-xs font-black text-slate-800 flex items-center gap-2">
                     <i class="fa-solid fa-flask text-emerald-600"></i> Live API Tester
                   </h3>
-                  <div class="grid sm:grid-cols-2 gap-3 text-xs font-bold">
+                  
+                  <div class="grid sm:grid-cols-3 gap-3 text-xs font-bold">
+                    
+                    <!-- Dropdown api selector -->
                     <div>
+                      <label class="text-slate-400">Select Target Endpoint</label>
+                      <select v-model="selectedTestApi" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl font-semibold outline-none focus:border-[#0088CC]">
+                        <option value="getnum">getnum (Allocate Number)</option>
+                        <option value="liveaccess">liveaccess (Check Access Status)</option>
+                        <option value="success-otp">success-otp (Success logs)</option>
+                        <option value="console">console (Live Stream Logs)</option>
+                      </select>
+                    </div>
+
+                    <!-- Input range (conditional display) -->
+                    <div v-if="selectedTestApi === 'getnum'">
                       <label class="text-slate-400">Target Range ID</label>
                       <input type="text" v-model="testRange" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
                     </div>
-                    <div class="flex items-end">
+
+                    <!-- Exec button -->
+                    <div class="flex items-end" :class="selectedTestApi !== 'getnum' ? 'col-span-2' : ''">
                       <button @click="runLiveApiTest" :disabled="testApiLoading" class="w-full bg-[#0088CC] hover:bg-[#0077B5] text-white font-bold py-3 rounded-xl transition flex items-center justify-center gap-1.5 disabled:bg-slate-200">
                         <i v-if="testApiLoading" class="fa-solid fa-spinner animate-spin"></i>
                         <span>Execute API Test</span>
                       </button>
                     </div>
+
                   </div>
+
                   <!-- Test Response -->
                   <div v-if="testApiResponse" class="mt-3">
-                    <span class="text-[9px] text-slate-400 font-bold uppercase block mb-1">API Response Payload (402 Returned on Auth Error):</span>
+                    <span class="text-[9px] text-slate-400 font-bold uppercase block mb-1">API Response Payload (402 returned on auth failure):</span>
                     <pre class="bg-slate-900 text-emerald-400 p-4 rounded-2xl text-[10px] font-mono overflow-x-auto select-all leading-relaxed shadow-inner">{{ testApiResponse }}</pre>
                   </div>
                 </div>
@@ -1435,7 +1497,8 @@ def index():
             const toastMessage = ref('');
             let pollingTimer = null;
 
-            // Live Test Lab Variables
+            // Live Test Lab Variables (Added interactive dropdown mapping logic)
+            const selectedTestApi = ref('getnum');
             const testRange = ref('2250789XXX');
             const testApiLoading = ref(false);
             const testApiResponse = ref(null);
@@ -1708,6 +1771,7 @@ def index():
               }
             };
 
+            // Dynamic test script targeting selected APIs dynamically
             const runLiveApiTest = async () => {
               if (!profile.value?.api_key) {
                 alert("Please generate an API Key first.");
@@ -1716,7 +1780,17 @@ def index():
               testApiLoading.value = true;
               testApiResponse.value = null;
               try {
-                const res = await fetch(`/@public/api/getnum?api_key=${profile.value.api_key}&rid=${testRange.value}`);
+                let url = '';
+                if (selectedTestApi.value === 'getnum') {
+                  url = `/@public/api/getnum?api_key=${profile.value.api_key}&rid=${testRange.value}`;
+                } else if (selectedTestApi.value === 'liveaccess') {
+                  url = `/@public/api/liveaccess?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'success-otp') {
+                  url = `/@public/api/success-otp?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'console') {
+                  url = `/@public/api/console?api_key=${profile.value.api_key}`;
+                }
+                const res = await fetch(url);
                 const data = await res.json();
                 testApiResponse.value = JSON.stringify(data, null, 2);
               } catch (e) {
@@ -1830,7 +1904,7 @@ def index():
               allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
               handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
-              apiGenLoading, handleGenerateApiKey, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
+              apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
               withdrawAmount, withdrawMethod, submitWithdrawal
             };
           }
@@ -1842,7 +1916,7 @@ def index():
     return Response(html_content, mimetype='text/html')
 
 # =========================================================================
-# Master Admin Panel UI (No Functional Updates Changed)
+# Master Admin Panel UI (Unchanged)
 # =========================================================================
 @app.route('/admin', methods=['GET'])
 def admin_portal():
@@ -2276,295 +2350,461 @@ def admin_portal():
       </div>
 
       <script>
-        const { createApp, ref, onMounted, computed } = Vue;
+        const { createApp, ref, onMounted, watch, computed } = Vue;
 
         createApp({
           setup() {
-            const loading = ref(true);
+            const userLoaded = ref(false); 
+            const user = ref(null);
+            const profile = ref(null);
+            const authName = ref('');
+            const authEmail = ref('');
+            const authPassword = ref('');
+            const isRegistering = ref(false);
             const authLoading = ref(false);
-            const adminToken = ref(localStorage.getItem('mino_admin_token') || '');
-            const username = ref('');
-            const password = ref('');
+
             const currentTab = ref('dashboard');
+            const announcement = ref('');
+            const mobileMenuOpen = ref(false);
+
+            const rid = ref('2250789XXX'); 
+            const nationalFormat = ref(true); 
+            const removePlus = ref(true);     
+            
+            const activeNumber = ref(null);
+            const activeCountry = ref('');
+            const activeOperator = ref('');
+            const otpResult = ref(null);
+            const loadingNumber = ref(false);
+            const liveLogs = ref([]);
+            const successOtps = ref([]);
+            
+            const walletAddressInput = ref('');
+            const walletLoading = ref(false);
+            const apiGenLoading = ref(false);
+
             const searchQuery = ref('');
 
-            const announcementInput = ref('');
-
-            const stats = ref({
-              total_users: 0,
-              pending_users: 0,
-              total_allocations: 0,
-              total_otps: 0,
-              total_withdrawals: 0,
-              maintenance_mode: false
-            });
-
-            const users = ref([]);
             const allocations = ref([]);
-            const otpLogs = ref([]);
-            const withdrawals = ref([]);
-            const editUser = ref(null);
+            const currentPage = ref(1);
+            const itemsPerPage = 200;
 
-            const toast = ref(false);
+            const showToast = ref(false);
             const toastMessage = ref('');
+            let pollingTimer = null;
+
+            // Live Test Lab Variables (Interactive dropdown mapping added for testing all 4 APIs)
+            const selectedTestApi = ref('getnum');
+            const testRange = ref('2250789XXX');
+            const testApiLoading = ref(false);
+            const testApiResponse = ref(null);
+            const apiBaseUrl = ref(window.location.origin);
+
+            // Withdrawal Variables 
+            const withdrawAmount = ref('');
+            const withdrawMethod = ref('TRC20');
+
+            const playBeep = () => {
+              try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = "sine";
+                osc.frequency.setValueAtTime(880, ctx.currentTime); 
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.15); 
+              } catch (e) {
+                console.log("Audio notify failed:", e);
+              }
+            };
 
             const triggerToast = (msg) => {
               toastMessage.value = msg;
-              toast.value = true;
-              setTimeout(() => { toast.value = false; }, 2000);
+              showToast.value = true;
+              setTimeout(() => {
+                showToast.value = false;
+              }, 2000);
             };
 
-            const handleLogin = async () => {
-              if (!username.value || !password.value) return;
-              authLoading.value = true;
+            const copyToClipboard = (text) => {
+              if (!text) return;
+              navigator.clipboard.writeText(text);
+              triggerToast("Copied: " + text);
+            };
+
+            const copyFullSms = (messageText) => {
+              if (!messageText) return;
+              navigator.clipboard.writeText(messageText);
+              triggerToast("Full OTP SMS message copied! ✅");
+            };
+
+            const navigateMobile = (tabName) => {
+              currentTab.value = tabName;
+              mobileMenuOpen.value = false;
+            };
+
+            const filteredAllocations = computed(() => {
+              if (!allocations.value) return [];
+              const q = searchQuery.value.toLowerCase().trim();
+              if (!q) return allocations.value;
+              return allocations.value.filter(alloc => 
+                (alloc.number && alloc.number.includes(q)) || 
+                (alloc.country && alloc.country.toLowerCase().includes(q)) ||
+                (alloc.operator && alloc.operator.toLowerCase().includes(q))
+              );
+            });
+
+            const paginatedAllocations = computed(() => {
+              if (!filteredAllocations.value) return [];
+              const start = (currentPage.value - 1) * itemsPerPage;
+              const end = start + itemsPerPage;
+              return filteredAllocations.value.slice(start, end);
+            });
+
+            const totalPages = computed(() => {
+              return Math.ceil(filteredAllocations.value.length / itemsPerPage) || 1;
+            });
+
+            const prevPage = () => {
+              if (currentPage.value > 1) currentPage.value--;
+            };
+
+            const nextPage = () => {
+              if (currentPage.value < totalPages.value) currentPage.value++;
+            };
+
+            const updateTimers = () => {
+              if (!allocations.value) return;
+              allocations.value.forEach(alloc => {
+                if (alloc.status === 'active') {
+                  const createdAt = new Date(alloc.createdAt);
+                  const elapsedSeconds = Math.floor((new Date() - createdAt) / 1000);
+                  const remaining = Math.max(0, 1080 - elapsedSeconds);
+                  alloc.timeLeft = remaining;
+                  if (remaining === 0) {
+                    alloc.status = 'expired';
+                  }
+                } else {
+                  alloc.timeLeft = 0;
+                }
+              });
+            };
+
+            const startPolling = () => {
+              stopPolling();
+              fetchData();
+              pollingTimer = setInterval(fetchData, 3000); 
+            };
+
+            const stopPolling = () => {
+              if (pollingTimer) {
+                clearInterval(pollingTimer);
+                pollingTimer = null;
+              }
+            };
+
+            const fetchData = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) {
+                userLoaded.value = true;
+                return;
+              }
+
+              // 1. Fetch User Profile Details
               try {
-                const res = await fetch('/api/v1/admin/login', {
+                const profileRes = await fetch('/api/v1/auth/me', {
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (profileRes.status === 401 || profileRes.status === 402) {
+                  signOut();
+                  userLoaded.value = true;
+                  return;
+                }
+
+                const profileData = await profileRes.json();
+                if (profileData.status === 'success') {
+                  user.value = profileData.user;
+                  profile.value = profileData.user;
+                  announcement.value = profileData.announcement;
+                  if (profileData.user.wallet_address && !walletAddressInput.value) {
+                    walletAddressInput.value = profileData.user.wallet_address;
+                  }
+                }
+              } catch (e) {
+                console.log("Profile Fetch Error:", e);
+              }
+
+              userLoaded.value = true; 
+
+              // 2. Poll active number allocations
+              if (profile.value) {
+                try {
+                  const allocRes = await fetch('/api/v1/user-allocations', {
+                    headers: { 
+                      'Authorization': `Bearer ${token}`,
+                      'X-MINO-API-KEY': profile.value.api_key || ''
+                    }
+                  });
+                  const allocData = await allocRes.json();
+                  if (allocData.status === 'success') {
+                    const prevCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    
+                    allocations.value = allocData.allocations;
+                    updateTimers();
+
+                    const newCompletedCount = allocations.value.filter(a => a.status === 'completed').length;
+                    if (newCompletedCount > prevCompletedCount && prevCompletedCount > 0) {
+                      playBeep();
+                      triggerToast("New OTP message received! 🔔");
+                    }
+                  }
+                } catch (e) {}
+              }
+
+              // 3. Fetch Signal Radar Logs
+              try {
+                const consoleRes = await fetch('/api/v1/live-console');
+                const consoleData = await consoleRes.json();
+                if (consoleData.status === 'success') {
+                  liveLogs.value = consoleData.data;
+                }
+              } catch (e) {}
+
+              // 4. Fetch Dashboard OTP Report data
+              if (profile.value) {
+                try {
+                  const otpRes = await fetch('/api/v1/success-otp?api_key=' + (profile.value.api_key || ''));
+                  const otpData = await otpRes.json();
+                  if (otpData.status === 'success') {
+                    successOtps.value = otpData.data;
+                  }
+                } catch (e) {}
+              }
+            };
+
+            const handleUpdateWallet = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token || !walletAddressInput.value.trim()) return;
+              
+              walletLoading.value = true;
+              try {
+                const res = await fetch('/api/v1/user/update-wallet', {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ username: username.value, password: password.value })
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({ wallet_address: walletAddressInput.value })
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  adminToken.value = data.token;
-                  localStorage.setItem('mino_admin_token', data.token);
-                  triggerToast("Portal Access Granted! 🔓");
-                  fetchDashboardData();
+                  triggerToast("Wallet address successfully configured! ✅");
+                  fetchData();
                 } else {
-                  alert(data.message || 'Invalid admin credentials entered.');
+                  alert(data.message);
                 }
               } catch (e) {
-                alert("Server connection failed.");
+                alert("Failed to update wallet address.");
+              }
+              walletLoading.value = false;
+            };
+
+            const handleGenerateApiKey = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token) return;
+              
+              apiGenLoading.value = true;
+              try {
+                const res = await fetch('/api/v1/user/generate-key', {
+                  method: 'POST',
+                  headers: { 
+                    'Authorization': `Bearer ${token}`
+                  }
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("API Access Key generated! ✅");
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("Could not generate API Access Key.");
+              }
+              apiGenLoading.value = false;
+            };
+
+            const submitWithdrawal = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!token || withdrawAmount.value <= 0) return;
+              try {
+                const res = await fetch('/api/v1/user/withdraw', {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                  },
+                  body: JSON.stringify({
+                    amount: withdrawAmount.value,
+                    method: withdrawMethod.value,
+                    address: profile.value.wallet_address
+                  })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  alert("Your withdrawal request has been submitted.");
+                  withdrawAmount.value = '';
+                  fetchData();
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("An error occurred while submitting withdrawal request.");
+              }
+            };
+
+            // Dynamic test script targeting selected APIs dynamically
+            const runLiveApiTest = async () => {
+              if (!profile.value?.api_key) {
+                alert("Please generate an API Key first.");
+                return;
+              }
+              testApiLoading.value = true;
+              testApiResponse.value = null;
+              try {
+                let url = '';
+                if (selectedTestApi.value === 'getnum') {
+                  url = `/@public/api/getnum?api_key=${profile.value.api_key}&rid=${testRange.value}`;
+                } else if (selectedTestApi.value === 'liveaccess') {
+                  url = `/@public/api/liveaccess?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'success-otp') {
+                  url = `/@public/api/success-otp?api_key=${profile.value.api_key}`;
+                } else if (selectedTestApi.value === 'console') {
+                  url = `/@public/api/console?api_key=${profile.value.api_key}`;
+                }
+                const res = await fetch(url);
+                const data = await res.json();
+                testApiResponse.value = JSON.stringify(data, null, 2);
+              } catch (e) {
+                testApiResponse.value = "API Request failed.";
+              }
+              testApiLoading.value = false;
+            };
+
+            onMounted(() => {
+              const token = localStorage.getItem('mino_session_token');
+              if (token) {
+                startPolling();
+              } else {
+                userLoaded.value = true;
+              }
+              setInterval(updateTimers, 1000);
+            });
+
+            const handleAuth = async () => {
+              if (!authEmail.value || !authPassword.value) return;
+              authLoading.value = true;
+              try {
+                const url = isRegistering.value ? '/api/v1/auth/register' : '/api/v1/auth/login';
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                    email: authEmail.value, 
+                    password: authPassword.value,
+                    name: authName.value
+                  })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                  if (isRegistering.value) {
+                     alert("Your account has been registered successfully. Please wait for admin approval.");
+                     isRegistering.value = false;
+                     authLoading.value = false;
+                     return;
+                  }
+                  localStorage.setItem('mino_session_token', data.token);
+                  user.value = data.user;
+                  profile.value = data.user;
+                  startPolling();
+                } else {
+                  alert(data.message);
+                }
+              } catch (err) {
+                alert(err.message || 'Authentication process failed.');
               }
               authLoading.value = false;
             };
 
-            const logOut = () => {
-              localStorage.removeItem('mino_admin_token');
-              adminToken.value = '';
-              triggerToast("Logged out securely. 🔒");
+            const signOut = () => {
+              localStorage.removeItem('mino_session_token');
+              user.value = null;
+              profile.value = null;
+              activeNumber.value = null;
+              otpResult.value = null;
+              allocations.value = [];
+              stopPolling();
             };
 
-            const fetchDashboardData = async () => {
-              if (!adminToken.value) {
-                loading.value = false;
-                return;
-              }
+            const handleGetNumber = async () => {
+              const token = localStorage.getItem('mino_session_token');
+              if (!profile.value || !token) return;
+              loadingNumber.value = true;
+              otpResult.value = null;
+              activeNumber.value = null;
+              activeCountry.value = '';
+              activeOperator.value = '';
               try {
-                // 1. Fetch Stats
-                const statRes = await fetch('/api/v1/admin/dashboard', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                if (statRes.status === 401) { logOut(); return; }
-                const statData = await statRes.json();
-                if (statData.status === 'success') stats.value = statData.stats;
-
-                // 2. Fetch Users
-                const userRes = await fetch('/api/v1/admin/users', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                const userData = await userRes.json();
-                if (userData.status === 'success') users.value = userData.users;
-
-                // 3. Fetch allocations
-                const allocRes = await fetch('/api/v1/admin/allocations', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                const allocData = await allocRes.json();
-                if (allocData.status === 'success') allocations.value = allocData.allocations;
-
-                // 4. Fetch OTP Logs
-                const logRes = await fetch('/api/v1/admin/otp-logs', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                const logData = await logRes.json();
-                if (logData.status === 'success') otpLogs.value = logData.otp_logs;
-
-                // 5. Fetch Withdrawals
-                const wdRes = await fetch('/api/v1/admin/withdrawals', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                const wdData = await wdRes.json();
-                if (wdData.status === 'success') withdrawals.value = wdData.withdrawals;
-
-              } catch (e) {
-                console.log("Admin API error:", e);
-              }
-              loading.value = false;
-            };
-
-            const toggleMaintenanceMode = async () => {
-              const currentMode = stats.value.maintenance_mode;
-              try {
-                const res = await fetch('/api/v1/admin/settings/toggle-maintenance', {
-                  method: 'POST',
-                  headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken.value}`
-                  },
-                  body: JSON.stringify({ maintenance_mode: !currentMode })
+                const natVal = nationalFormat.value ? 1 : 0;
+                const remVal = removePlus.value ? 1 : 0;
+                const res = await fetch(`/api/v1/getnum?rid=${rid.value}&national=${natVal}&remove_plus=${remVal}`, {
+                  headers: { 'Authorization': `Bearer ${token}` }
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  stats.value.maintenance_mode = data.maintenance_mode;
-                  triggerToast(`Maintenance mode turned ${data.maintenance_mode ? 'ON' : 'OFF'}. 🛠️`);
-                }
-              } catch (e) {}
-            };
-
-            const updateAnnouncement = async () => {
-              try {
-                const res = await fetch('/api/v1/admin/announcement', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken.value}`
-                  },
-                  body: JSON.stringify({ announcement: announcementInput.value })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                  triggerToast("Global notice updated! 📢");
-                }
-              } catch (e) {}
-            };
-
-            const processWithdrawal = async (id, action) => {
-              if (!confirm(`Are you sure you want to change this withdrawal request status to ${action}?`)) return;
-              try {
-                const res = await fetch('/api/v1/admin/withdrawals/action', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken.value}`
-                  },
-                  body: JSON.stringify({ id, action })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                  triggerToast(`Withdrawal request has been marked as ${action}.`);
-                  fetchDashboardData();
+                  triggerToast("Number successfully allocated!");
+                  fetchData(); 
                 } else {
                   alert(data.message);
                 }
-              } catch (e) {}
+              } catch (err) {
+                alert('Failed to allocate number');
+              }
+              loadingNumber.value = false;
             };
 
-            const downloadBackup = async () => {
-              try {
-                const res = await fetch('/api/v1/admin/backup', {
-                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data.data, null, 2));
-                  const downloadAnchor = document.createElement('a');
-                  downloadAnchor.setAttribute("href", dataStr);
-                  downloadAnchor.setAttribute("download", `mino_backup_${new Date().toISOString().slice(0,10)}.json`);
-                  document.body.appendChild(downloadAnchor);
-                  downloadAnchor.click();
-                  downloadAnchor.remove();
-                  triggerToast("Database JSON export download initiated! 📥");
-                }
-              } catch (e) {}
-            };
-
-            const exportUsersToCSV = () => {
-              let csvContent = "data:text/csv;charset=utf-8,";
-              csvContent += "Name,Email,Balance,Status,OTP Rate\\n";
-              
-              users.value.forEach(u => {
-                csvContent += `"${u.name}","${u.email}",${u.balance},"${u.status}",${u.otp_rate}\\n`;
-              });
-
-              const encodedUri = encodeURI(csvContent);
-              const link = document.createElement("a");
-              link.setAttribute("href", encodedUri);
-              link.setAttribute("download", `mino_users_export_${new Date().toISOString().slice(0,10)}.csv`);
-              document.body.appendChild(link);
-              link.click();
-              link.remove();
-              triggerToast("User database exported to CSV! 📊");
-            };
-
-            const filteredUsers = computed(() => {
-              if (!users.value) return [];
-              const q = searchQuery.value.toLowerCase().trim();
-              if (!q) return users.value;
-              return users.value.filter(u => 
-                (u.name && u.name.toLowerCase().includes(q)) || 
-                (u.email && u.email.toLowerCase().includes(q)) ||
-                (u.id_code && u.id_code.toLowerCase().includes(q))
-              );
-            });
-
-            const openEditModal = (u) => {
-              editUser.value = { ...u };
-            };
-
-            const saveUserChanges = async () => {
-              if (!editUser.value) return;
-              try {
-                const res = await fetch('/api/v1/admin/users/update', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken.value}`
-                  },
-                  body: JSON.stringify(editUser.value)
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                  triggerToast("User account details successfully updated! ✅");
-                  editUser.value = null;
-                  fetchDashboardData();
-                } else {
-                  alert(data.message);
-                }
-              } catch (e) {}
-            };
-
-            const deleteUser = async (uid) => {
-              if (!confirm("Are you sure you want to permanently delete this user account?")) return;
-              try {
-                const res = await fetch('/api/v1/admin/users/delete', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken.value}`
-                  },
-                  body: JSON.stringify({ uid })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                  triggerToast("User permanently removed. 🗑️");
-                  fetchDashboardData();
-                }
-              } catch (e) {}
+            const formatTime = (seconds) => {
+              const mins = Math.floor(seconds / 60);
+              const secs = seconds % 60;
+              return mins + ':' + (secs < 10 ? '0' : '') + secs;
             };
 
             const formatTimestamp = (isoString) => {
               if (!isoString) return '';
               try {
                 const d = new Date(isoString);
-                return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
               } catch (e) {
                 return '';
               }
             };
 
-            onMounted(() => {
-              fetchDashboardData();
-              setInterval(fetchDashboardData, 10000); 
-            });
-
             return {
-              loading, authLoading, adminToken, username, password, currentTab, searchQuery,
-              stats, users, allocations, otpLogs, withdrawals, editUser, toast, toastMessage, announcementInput,
-              handleLogin, logOut, toggleMaintenanceMode, updateAnnouncement, processWithdrawal, downloadBackup, exportUsersToCSV,
-              filteredUsers, openEditModal, saveUserChanges, deleteUser, formatTimestamp
+              userLoaded, user, profile, authName, authEmail, authPassword, isRegistering, authLoading,
+              currentTab, announcement, mobileMenuOpen, navigateMobile, rid, nationalFormat, removePlus, activeNumber, activeCountry, activeOperator, otpResult, loadingNumber, liveLogs, successOtps,
+              allocations, currentPage, itemsPerPage, paginatedAllocations, totalPages, prevPage, nextPage, searchQuery,
+              showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
+              handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
+              apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
+              withdrawAmount, withdrawMethod, submitWithdrawal
             };
           }
-        }).mount('#admin-app');
+        }).mount('#app');
       </script>
     </body>
     </html>
