@@ -2886,7 +2886,7 @@ def admin_portal():
                 <!-- Service Specific Payout Rates & Control Status Configurations -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration
+                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout & Control Status Configuration (৳)
                   </h3>
                   <p class="text-[10px] text-slate-400 font-semibold leading-relaxed">
                     Configure the payout rate and active status (ON/OFF) for each service. If a service status is toggled to OFF, users will not receive any balance reward upon OTP hits on that service.
@@ -3191,7 +3191,7 @@ def admin_portal():
             };
 
             const processWithdrawal = async (id, action) => {
-              if (!confirm(`Are you sure you want to change this withdrawal request status to ${action}?`)) return;
+              if (!confirm("Are you sure you want to change this withdrawal request status to " + action + "?")) return;
               try {
                 const res = await fetch('/api/v1/admin/withdrawals/action', {
                   method: 'POST',
@@ -3203,7 +3203,7 @@ def admin_portal():
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                  triggerToast(`Withdrawal request has been marked as ${action}.`);
+                  triggerToast("Withdrawal request has been marked as " + action);
                   fetchDashboardData();
                 } else {
                   alert(data.message);
@@ -3221,7 +3221,7 @@ def admin_portal():
                   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data.data, null, 2));
                   const downloadAnchor = document.createElement('a');
                   downloadAnchor.setAttribute("href", dataStr);
-                  downloadAnchor.setAttribute("download", `mino_backup_${new Date().toISOString().slice(0,10)}.json`);
+                  downloadAnchor.setAttribute("download", "mino_backup_" + new Date().toISOString().slice(0,10) + ".json");
                   document.body.appendChild(downloadAnchor);
                   downloadAnchor.click();
                   downloadAnchor.remove();
@@ -3235,13 +3235,13 @@ def admin_portal():
               csvContent += "Name,Email,Balance,Status,OTP Rate\\n";
               
               users.value.forEach(u => {
-                csvContent += `"${u.name}","${u.email}",${u.balance},"${u.status}",${u.otp_rate}\\n`;
+                csvContent += '"' + u.name + '","' + u.email + '",' + u.balance + ',"' + u.status + '",' + u.otp_rate + '\\n';
               });
 
               const encodedUri = encodeURI(csvContent);
               const link = document.createElement("a");
               link.setAttribute("href", encodedUri);
-              link.setAttribute("download", `mino_users_export_${new Date().toISOString().slice(0,10)}.csv`);
+              link.setAttribute("download", "mino_users_export_" + new Date().toISOString().slice(0,10) + ".csv");
               document.body.appendChild(link);
               link.click();
               link.remove();
