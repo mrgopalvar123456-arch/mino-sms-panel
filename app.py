@@ -675,6 +675,10 @@ def get_user_allocations():
         all_allocs_list = firebase_to_list(all_allocs_dict)
         active_allocs_list = [alloc for alloc in all_allocs_list if alloc.get('userId') == user_id]
 
+        # Fetch Active Service Rates from Settings to use for dynamic rewards calculation
+        service_rates = fb_db.reference('/settings/service_rates').get() or {}
+        service_rates = {k.lower(): v for k, v in service_rates.items()}
+
         try:
             res = requests.get(f"{STEX_BASE_URL}/success-otp", headers={'mauthapi': STEX_API_KEY}, timeout=4)
             if res.status_code == 200:
@@ -719,7 +723,9 @@ def get_user_allocations():
                                         break
                                 
                                 if not exist_log:
-                                    new_balance = float(user.get('balance', 0.0)) + otp_rate
+                                    # Use specific service rate if configured, fallback to user-level flat otp_rate
+                                    payout_rate = float(service_rates.get(service, otp_rate))
+                                    new_balance = float(user.get('balance', 0.0)) + payout_rate
                                     fb_db.reference(f'/users/{user_id}/balance').set(new_balance)
                                     
                                     otp_id = "otp_" + secrets.token_hex(8)
@@ -729,7 +735,7 @@ def get_user_allocations():
                                         'service': service,
                                         'otpCode': otp_code,
                                         'message': message,
-                                        'revenue': otp_rate,
+                                        'revenue': payout_rate,
                                         'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat()
                                     })
 
@@ -769,6 +775,22 @@ def get_user_allocations():
         refreshed_list.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
 
         return jsonify({'status': 'success', 'allocations': refreshed_list})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+# Endpoint for Users to retrieve current service payout rates
+@app.route('/api/v1/user/service-rates', methods=['GET'])
+def user_get_service_rates():
+    try:
+        rates = fb_db.reference('/settings/service_rates').get() or {
+            'facebook': 0.40,
+            'instagram': 0.40,
+            'whatsapp': 0.40,
+            'telegram': 0.40,
+            'google': 0.40,
+            'generic': 0.40
+        }
+        return jsonify({'status': 'success', 'rates': rates})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -903,6 +925,39 @@ def admin_api_announcement():
         msg = data.get('announcement', '').strip()
         fb_db.reference('/settings/announcement').set(msg)
         return jsonify({'status': 'success', 'message': 'Announcement updated'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/v1/admin/settings/service-rates', methods=['GET'])
+def admin_get_service_rates():
+    if not verify_admin():
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    try:
+        rates = fb_db.reference('/settings/service_rates').get() or {
+            'facebook': 0.40,
+            'instagram': 0.40,
+            'whatsapp': 0.40,
+            'telegram': 0.40,
+            'google': 0.40,
+            'generic': 0.40
+        }
+        return jsonify({'status': 'success', 'rates': rates})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/v1/admin/settings/service-rates', methods=['POST'])
+def admin_set_service_rates():
+    if not verify_admin():
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    try:
+        data = request.get_json(silent=True) or {}
+        rates = data.get('rates', {})
+        sanitized_rates = {}
+        for k, v in rates.items():
+            sanitized_rates[str(k).strip().lower()] = float(v)
+        
+        fb_db.reference('/settings/service_rates').set(sanitized_rates)
+        return jsonify({'status': 'success', 'message': 'Service payout rates successfully updated', 'rates': sanitized_rates})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
@@ -1194,7 +1249,7 @@ def index():
                     <div class="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center gap-3">
                       <div class="bg-amber-50 h-10 w-10 rounded-xl flex items-center justify-center text-amber-600 shrink-0"><i class="fa-solid fa-tag text-md"></i></div>
                       <div>
-                        <p class="text-[10px] text-slate-400 font-bold">OTP Rate</p>
+                        <p class="text-[10px] text-slate-400 font-bold">Base OTP Rate</p>
                         <h4 class="text-sm md:text-lg font-bold text-slate-900 mt-0.5">৳ {{ parseFloat(profile ? profile.otp_rate : 0.40).toFixed(2) }}</h4>
                       </div>
                     </div>
@@ -1207,6 +1262,39 @@ def index():
                       </div>
                     </div>
 
+                  </div>
+                </div>
+
+                <!-- Service-wise Active Payout Rates List Card -->
+                <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-3">
+                  <h3 class="font-extrabold text-xs text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <i class="fa-solid fa-calculator text-[#0088CC]"></i> ACTIVE SERVICE PAYOUT RATES
+                  </h3>
+                  <div class="grid grid-cols-2 md:grid-cols-6 gap-2.5 text-xs text-center">
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Facebook</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.facebook || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Instagram</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.instagram || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">WhatsApp</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.whatsapp || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Telegram</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.telegram || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Google</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.google || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
+                    <div class="bg-slate-50 border rounded-xl p-2.5">
+                      <span class="text-[9px] font-bold text-slate-400 uppercase block">Generic/Other</span>
+                      <span class="font-extrabold text-[#0088CC] text-sm block mt-0.5">৳ {{ parseFloat(serviceRates.generic || profile?.otp_rate || 0.40).toFixed(2) }}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -1850,6 +1938,16 @@ def index():
             const withdrawAmount = ref('');
             const withdrawMethod = ref('TRC20');
 
+            // Dynamic active service payout rates list 
+            const serviceRates = ref({
+              facebook: 0.40,
+              instagram: 0.40,
+              whatsapp: 0.40,
+              telegram: 0.40,
+              google: 0.40,
+              generic: 0.40
+            });
+
             const playBeep = () => {
               try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2108,6 +2206,15 @@ def index():
                   leaderboardData.value.lifetime = boardData.lifetime;
                 }
               } catch (e) {}
+
+              // 5. Fetch current active service rates
+              try {
+                const ratesRes = await fetch('/api/v1/user/service-rates');
+                const ratesData = await ratesRes.json();
+                if (ratesData.status === 'success') {
+                  serviceRates.value = ratesData.rates;
+                }
+              } catch (e) {}
             };
 
             const handleUpdateWallet = async () => {
@@ -2336,7 +2443,7 @@ def index():
               showToast, toastMessage, copyToClipboard, copyFullSms, walletAddressInput, walletLoading, handleUpdateWallet,
               handleAuth, signOut, handleGetNumber, formatTime, formatTimestamp,
               apiGenLoading, handleGenerateApiKey, selectedTestApi, runLiveApiTest, testRange, testApiLoading, testApiResponse, apiBaseUrl,
-              barColors, dotColors, topApps, leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal
+              barColors, dotColors, topApps, leaderboardTab, leaderboardData, withdrawAmount, withdrawMethod, submitWithdrawal, serviceRates
             };
           }
         }).mount('#app');
@@ -2398,7 +2505,7 @@ def admin_portal():
                 </div>
                 <div>
                   <label class="text-xs font-bold text-slate-500">Admin Password</label>
-                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border border-rose-600 transition outline-none" />
+                  <input type="password" required v-model="password" class="w-full mt-1.5 p-3.5 bg-slate-50 border-rose-600 transition outline-none" />
                 </div>
 
                 <button type="submit" :disabled="authLoading" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3.5 rounded-xl text-sm shadow-md transition disabled:bg-slate-300">
@@ -2726,6 +2833,47 @@ def admin_portal():
               <!-- ==================== Tab 6: System Settings & Controls ==================== -->
               <div v-if="currentTab === 'settings'" class="space-y-6">
                 
+                <!-- Service Specific Payout Rates Configuration Dashboard -->
+                <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
+                  <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <i class="fa-solid fa-coins text-rose-600"></i> Service OTP Payout Rates Configuration (৳)
+                  </h3>
+                  <p class="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                    Set specific reward payout rates for individual services. If a rate is configured below, users will earn that specific amount for successful OTPs instead of their standard base rate.
+                  </p>
+                  
+                  <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs font-bold">
+                    <div>
+                      <label class="text-slate-400">Facebook Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.facebook" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                    <div>
+                      <label class="text-slate-400">Instagram Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.instagram" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                    <div>
+                      <label class="text-slate-400">WhatsApp Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.whatsapp" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                    <div>
+                      <label class="text-slate-400">Telegram Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.telegram" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                    <div>
+                      <label class="text-slate-400">Google Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.google" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                    <div>
+                      <label class="text-slate-400">Generic/Other Rate (৳)</label>
+                      <input type="number" step="0.01" v-model="serviceRates.generic" class="w-full mt-1.5 p-3 bg-slate-50 border rounded-xl" />
+                    </div>
+                  </div>
+
+                  <button @click="saveServiceRates" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shadow-xs active:scale-95">
+                    Save Service Payout Rates
+                  </button>
+                </div>
+
                 <!-- Announcement Banner Controls -->
                 <div class="bg-white p-6 rounded-3xl border shadow-xs space-y-4">
                   <h3 class="font-black text-xs text-slate-400 uppercase tracking-widest flex items-center gap-2">
@@ -2795,6 +2943,16 @@ def admin_portal():
 
             const announcementInput = ref('');
 
+            // Dynamic service payout rates configurations
+            const serviceRates = ref({
+              facebook: 0.40,
+              instagram: 0.40,
+              whatsapp: 0.40,
+              telegram: 0.40,
+              google: 0.40,
+              generic: 0.40
+            });
+
             const stats = ref({
               total_users: 0,
               pending_users: 0,
@@ -2840,8 +2998,8 @@ def admin_portal():
               } catch (e) {
                 alert("Server connection failed.");
               }
-                  authLoading.value = false;
-                };
+              authLoading.value = false;
+            };
 
             const logOut = () => {
               localStorage.removeItem('mino_admin_token');
@@ -2915,6 +3073,17 @@ def admin_portal():
                 const wdData = await wdRes.json();
                 if (wdData.status === 'success') withdrawals.value = wdData.withdrawals;
 
+                // 6. Fetch Service-specific Rates
+                const ratesRes = await fetch('/api/v1/admin/settings/service-rates', {
+                  headers: { 'Authorization': `Bearer ${adminToken.value}` }
+                });
+                if (ratesRes.status === 200) {
+                  const ratesData = await ratesRes.json();
+                  if (ratesData.status === 'success') {
+                    serviceRates.value = { ...serviceRates.value, ...ratesData.rates };
+                  }
+                }
+
               } catch (e) {
                 console.log("Admin API error:", e);
               }
@@ -2955,6 +3124,27 @@ def admin_portal():
                   triggerToast("Global notice updated! 📢");
                 }
               } catch (e) {}
+            };
+
+            const saveServiceRates = async () => {
+              try {
+                const res = await fetch('/api/v1/admin/settings/service-rates', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${adminToken.value}`
+                  },
+                  body: JSON.stringify({ rates: serviceRates.value })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                  triggerToast("Service payout rates successfully updated! 💰");
+                } else {
+                  alert(data.message);
+                }
+              } catch (e) {
+                alert("Failed to update service rates.");
+              }
             };
 
             const processWithdrawal = async (id, action) => {
@@ -3089,6 +3279,7 @@ def admin_portal():
             return {
               loading, authLoading, adminToken, username, password, currentTab, searchQuery,
               stats, users, allocations, otpLogs, withdrawals, editUser, toast, toastMessage, announcementInput,
+              serviceRates, saveServiceRates,
               handleLogin, logOut, toggleMaintenanceMode, updateAnnouncement, processWithdrawal, downloadBackup, exportUsersToCSV,
               filteredUsers, openEditModal, saveUserChanges, deleteUser, formatTimestamp
             };
