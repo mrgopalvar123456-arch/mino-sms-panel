@@ -77,7 +77,7 @@ HTML_TEMPLATE = """
     <p>
         যারা যারা ইউজার আছেন আমাদের এখানে কাজ করতেছেন, আমাদের <strong>সার্ভার চেঞ্জ করা হয়েছে</strong>। দয়া করে সবাই নতুন ডোমেইনে গিয়ে কাজ করুন।
     </p>
-    <a href="https://your-new-domain.com" class="btn">নতুন সার্ভারে যান</a>
+    <a href="https://mino-sms-panel.xyz/index.php" class="btn">নতুন সার্ভারে যান</a>
 </div>
 
 </body>
